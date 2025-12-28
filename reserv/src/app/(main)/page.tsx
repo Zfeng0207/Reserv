@@ -4,7 +4,7 @@ import { brand } from "@/lib/constants/brand";
 
 import { Button } from "@/components/ui/button";
 
-export default function LandingPage() {
+export default function HomePage() {
   return (
     <div className="container mx-auto flex flex-col items-center justify-center gap-8 py-32">
       <div className="text-center space-y-4">

@@ -81,10 +81,10 @@ const AuthNav = ({ authUser }: { authUser: any }) => {
 };
 
 /**
- * Add routes where the header should not be sticky. I personally use this
- * for the landing page, but you can add more routes as needed.
+ * Add routes where the header should not be sticky.
+ * Add more routes as needed.
  */
-const nonStickyRoutes = ["/landing"];
+const nonStickyRoutes: string[] = [];
 
 const sections = [
   {
@@ -119,14 +119,6 @@ export function Header() {
 
   const { authUser } = useAuth();
 
-  const handleClick = (
-    e: React.MouseEvent<HTMLAnchorElement>,
-    href: string
-  ) => {
-    e.preventDefault();
-    router.push(href);
-  };
-
   return (
     <header
       className={`border-b bg-background ${
@@ -149,25 +141,40 @@ export function Header() {
                       {section.links.map((link) => (
                         <li key={link.href}>
                           <NavigationMenuLink asChild>
-                            <a
-                              href={link.href}
-                              onClick={(e) => handleClick(e, link.href)}
-                              className="block select-none space-y-1 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
-                              target={
-                                link.href.startsWith("/info/")
-                                  ? "_blank"
-                                  : undefined
-                              }
-                              rel={
-                                link.href.startsWith("/info/")
-                                  ? "noopener noreferrer"
-                                  : undefined
-                              }
-                            >
-                              <div className="text-sm font-medium leading-none">
-                                {link.label}
-                              </div>
-                            </a>
+                            {link.href.startsWith("#") ? (
+                              <a
+                                href={link.href}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  const element = document.querySelector(link.href);
+                                  element?.scrollIntoView({ behavior: "smooth" });
+                                }}
+                                className="block select-none space-y-1 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                              >
+                                <div className="text-sm font-medium leading-none">
+                                  {link.label}
+                                </div>
+                              </a>
+                            ) : (
+                              <Link
+                                href={link.href}
+                                className="block select-none space-y-1 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                                target={
+                                  link.href.startsWith("/info/")
+                                    ? "_blank"
+                                    : undefined
+                                }
+                                rel={
+                                  link.href.startsWith("/info/")
+                                    ? "noopener noreferrer"
+                                    : undefined
+                                }
+                              >
+                                <div className="text-sm font-medium leading-none">
+                                  {link.label}
+                                </div>
+                              </Link>
+                            )}
                           </NavigationMenuLink>
                         </li>
                       ))}

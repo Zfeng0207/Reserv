@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 import {
   Github,
@@ -56,17 +56,8 @@ const socialIcons = {
 };
 
 export function Footer() {
-  const router = useRouter();
   const pathname = usePathname();
   const currentYear = new Date().getFullYear();
-
-  const handleClick = (
-    e: React.MouseEvent<HTMLAnchorElement>,
-    href: string
-  ) => {
-    e.preventDefault();
-    router.push(href);
-  };
 
   return (
     <footer className="border-t bg-background mt-12">
@@ -83,21 +74,34 @@ export function Footer() {
               <ul className="space-y-2">
                 {section.links.map((link) => (
                   <li key={link.href}>
-                    <a
-                      href={link.href}
-                      onClick={(e) => handleClick(e, link.href)}
-                      className="text-sm text-muted-foreground hover:text-primary transition-colors cursor-pointer"
-                      target={
-                        link.href.startsWith("/info/") ? "_blank" : undefined
-                      }
-                      rel={
-                        link.href.startsWith("/info/")
-                          ? "noopener noreferrer"
-                          : undefined
-                      }
-                    >
-                      {link.label}
-                    </a>
+                    {link.href.startsWith("#") ? (
+                      <a
+                        href={link.href}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const element = document.querySelector(link.href);
+                          element?.scrollIntoView({ behavior: "smooth" });
+                        }}
+                        className="text-sm text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                      >
+                        {link.label}
+                      </a>
+                    ) : (
+                      <Link
+                        href={link.href}
+                        className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                        target={
+                          link.href.startsWith("/info/") ? "_blank" : undefined
+                        }
+                        rel={
+                          link.href.startsWith("/info/")
+                            ? "noopener noreferrer"
+                            : undefined
+                        }
+                      >
+                        {link.label}
+                      </Link>
+                    )}
                   </li>
                 ))}
               </ul>

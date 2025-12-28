@@ -1,0 +1,1013 @@
+"use client"
+
+import type React from "react"
+
+import { useState, useEffect, useRef } from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import {
+  Calendar,
+  MapPin,
+  DollarSign,
+  Users,
+  Upload,
+  X,
+  Copy,
+  ChevronRight,
+  Search,
+  Check,
+  ImageIcon,
+  ChevronDown,
+} from "lucide-react"
+import { Card } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { useToast } from "@/hooks/use-toast"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Palette, Sparkles, Eye } from "lucide-react"
+
+const COVER_IMAGES = [
+  "/pickleball-animated-sport-dynamic-energy.jpg",
+  "/badminton-court-with-players.jpg",
+  "/tennis-court-aerial-view.jpg",
+  "/pickleball-game-action-shot.jpg",
+  "/indoor-sports-hall-badminton.jpg",
+  "/outdoor-sports-complex.jpg",
+]
+
+const TITLE_FONTS = {
+  Classic: "font-sans",
+  Eclectic: "font-mono",
+  Fancy: "font-serif",
+  Literary: "font-serif italic",
+}
+
+interface EditorBottomBarProps {
+  onPreview: () => void
+  onPublish?: () => void
+  onSaveDraft?: () => void
+  theme: string
+  onThemeChange: (theme: string) => void
+  effects: {
+    grain: boolean
+    glow: boolean
+    vignette: boolean
+  }
+  onEffectsChange: (effects: { grain: boolean; glow: boolean; vignette: boolean }) => void
+}
+
+export function EditorBottomBar({
+  onPreview,
+  onPublish,
+  onSaveDraft,
+  theme,
+  onThemeChange,
+  effects,
+  onEffectsChange,
+}: EditorBottomBarProps) {
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-50 bg-black/40 backdrop-blur-xl border-t border-white/10 pb-safe">
+      <div className="mx-auto max-w-md px-4 py-4">
+        <div className="flex items-center justify-center gap-8 mb-4">
+          <button
+            type="button"
+            onClick={() => {
+              // Theme selector logic would go here
+            }}
+            className="flex flex-col items-center gap-1.5 min-h-[44px] min-w-[44px] justify-center"
+          >
+            <Palette className="w-5 h-5 text-white" />
+            <span className="text-xs font-medium text-white/80">Theme</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              // Effect selector logic would go here
+            }}
+            className="flex flex-col items-center gap-1.5 min-h-[44px] min-w-[44px] justify-center relative"
+          >
+            <Sparkles className="w-5 h-5 text-white" />
+            <span className="text-xs font-medium text-white/80 flex items-center gap-1">
+              Effect
+              <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] text-[10px] px-1.5 py-0 h-4">
+                NEW
+              </Badge>
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onPreview}
+            className="flex flex-col items-center gap-1.5 min-h-[44px] min-w-[44px] justify-center"
+          >
+            <Eye className="w-5 h-5 text-white" />
+            <span className="text-xs font-medium text-white/80">Preview</span>
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          {onSaveDraft && (
+            <Button
+              onClick={onSaveDraft}
+              variant="outline"
+              className="flex-1 border-white/20 bg-white/5 hover:bg-white/10 text-white font-medium rounded-full h-12"
+            >
+              Save draft
+            </Button>
+          )}
+          {onPublish && (
+            <Button
+              onClick={onPublish}
+              className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12"
+            >
+              Publish
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function SessionInvite() {
+  const [isEditMode, setIsEditMode] = useState(true)
+  const [isPreviewMode, setIsPreviewMode] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
+  const { toast } = useToast()
+
+  const [isDateModalOpen, setIsDateModalOpen] = useState(false)
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false)
+  const [isCoverPickerOpen, setIsCoverPickerOpen] = useState(false)
+
+  const [eventTitle, setEventTitle] = useState("Saturday Morning Smash")
+  const [titleFont, setTitleFont] = useState<keyof typeof TITLE_FONTS>("Classic")
+  const [eventDate, setEventDate] = useState("Sat, Jan 25 • 9:00 AM - 11:00 AM")
+  const [eventLocation, setEventLocation] = useState("Victory Sports Complex, Court 3")
+  const [eventPrice, setEventPrice] = useState(15)
+  const [eventCapacity, setEventCapacity] = useState(8)
+  const [hostName, setHostName] = useState("Alex Chen")
+  const [selectedSport, setSelectedSport] = useState("Badminton")
+  const [eventDescription, setEventDescription] = useState(
+    "Join us for an energetic morning of badminton! All skill levels welcome. We'll have a rotation system so everyone gets to play. Bring your own racket or use one of ours.",
+  )
+
+  const [coverImage, setCoverImage] = useState("/pickleball-animated-sport-dynamic-energy.jpg")
+
+  const [bankName, setBankName] = useState("")
+  const [accountNumber, setAccountNumber] = useState("")
+  const [accountName, setAccountName] = useState("")
+  const [paymentNotes, setPaymentNotes] = useState("")
+  const [paymentQrImage, setPaymentQrImage] = useState<string | null>(null)
+  const [proofImage, setProofImage] = useState<string | null>(null) // For payment proof in preview mode
+
+  const [theme, setTheme] = useState("badminton")
+  const [effects, setEffects] = useState({
+    grain: true,
+    glow: false,
+    vignette: true,
+  })
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 20)
+    }
+    window.addEventListener("scroll", handleScroll)
+    return () => window.removeEventListener("scroll", handleScroll)
+  }, [])
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("reserv-theme")
+    const savedEffects = localStorage.getItem("reserv-effects")
+    if (savedTheme) setTheme(savedTheme)
+    if (savedEffects) setEffects(JSON.parse(savedEffects))
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem("reserv-theme", theme)
+    localStorage.setItem("reserv-effects", JSON.stringify(effects))
+  }, [theme, effects])
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto"
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
+    }
+  }, [eventDescription, isEditMode, isPreviewMode])
+
+  const suggestedDates = [
+    "Sat, Jan 25 • 9:00 AM - 11:00 AM",
+    "Sat, Jan 25 • 2:00 PM - 4:00 PM",
+    "Sun, Jan 26 • 9:00 AM - 11:00 AM",
+    "Sun, Jan 26 • 3:00 PM - 5:00 PM",
+  ]
+
+  const suggestedLocations = [
+    "Victory Sports Complex, Court 3",
+    "Setapak Sports Complex, Hall A",
+    "KL Badminton Centre, Court 5",
+    "Bukit Jalil Sports Arena",
+  ]
+
+  const handleDateSave = (date: string) => {
+    setEventDate(date)
+    setIsDateModalOpen(false)
+    toast({
+      title: "Date updated",
+      description: "Session date and time have been saved.",
+    })
+  }
+
+  const handleLocationSave = (location: string) => {
+    setEventLocation(location)
+    setIsLocationModalOpen(false)
+    toast({
+      title: "Location updated",
+      description: "Session location has been saved.",
+    })
+  }
+
+  const handleCoverSelect = (image: string) => {
+    setCoverImage(image)
+    setIsCoverPickerOpen(false)
+    toast({
+      title: "Cover updated",
+      description: "Session cover image has been changed.",
+    })
+  }
+
+  const handlePaymentImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setPaymentQrImage(reader.result as string)
+        toast({
+          title: "Image uploaded",
+          description: "Payment QR code has been uploaded.",
+        })
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const handleProofImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setProofImage(reader.result as string)
+        toast({
+          title: "Image uploaded",
+          description: "Payment proof has been uploaded.",
+        })
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const handleCostBlur = () => {
+    toast({
+      title: "Updated",
+      description: "Cost per person has been updated.",
+    })
+  }
+
+  const handleSpotsBlur = () => {
+    toast({
+      title: "Updated",
+      description: "Spots count has been updated.",
+    })
+  }
+
+  const handleHostNameBlur = () => {
+    toast({
+      title: "Host updated",
+      description: "Host name has been updated successfully",
+    })
+  }
+
+  return (
+    <div
+      className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
+      data-theme={theme}
+      data-effect-grain={effects.grain}
+      data-effect-glow={effects.glow}
+      data-effect-vignette={effects.vignette}
+    >
+      {effects.grain && (
+        <div className="fixed inset-0 pointer-events-none z-[100] opacity-[0.015] mix-blend-overlay">
+          <svg className="w-full h-full">
+            <filter id="noiseFilter">
+              <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" stitchTiles="stitch" />
+            </filter>
+            <rect width="100%" height="100%" filter="url(#noiseFilter)" />
+          </svg>
+        </div>
+      )}
+      {effects.vignette && (
+        <div
+          className="fixed inset-0 pointer-events-none z-[99]"
+          style={{
+            background: "radial-gradient(circle at center, transparent 0%, rgba(0, 0, 0, 0.4) 100%)",
+          }}
+        />
+      )}
+
+      {/* Top Navigation */}
+      <motion.nav
+        initial={{ opacity: 0 }}
+        animate={{ opacity: scrolled ? 0.98 : 0.85 }}
+        transition={{ duration: 0.2 }}
+        className="fixed top-0 left-0 right-0 z-50 bg-black/40 backdrop-blur-xl border-b border-white/5 shadow-sm safe-top"
+      >
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+          <div className="text-white font-semibold tracking-widest text-sm">RESERV</div>
+          <div className="flex items-center gap-4">
+            <button className="text-white/70 hover:text-white text-sm font-medium transition-colors">Home</button>
+            <button className="text-white/70 hover:text-white text-sm font-medium transition-colors">Login</button>
+          </div>
+        </div>
+      </motion.nav>
+
+      <AnimatePresence>
+        {isPreviewMode && (
+          <motion.div
+            initial={{ y: -100 }}
+            animate={{ y: 0 }}
+            exit={{ y: -100 }}
+            className="fixed top-14 left-0 right-0 z-40 bg-lime-500/90 text-black px-4 py-2 flex items-center justify-between safe-top"
+          >
+            <span className="font-medium text-xs">Previewing as participant</span>
+            <Button
+              onClick={() => setIsPreviewMode(false)}
+              size="sm"
+              className="bg-black hover:bg-black/80 text-white h-7 text-xs px-3"
+            >
+              Back to edit
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Main Content */}
+      <div className="relative">
+        {/* Hero Card with Full-Height Immersive Background */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6 }}
+          className="relative min-h-[85vh] overflow-hidden"
+        >
+          {/* Background Image */}
+          <div
+            className="absolute inset-0 bg-cover bg-center"
+            style={{
+              backgroundImage: `url(${coverImage})`,
+            }}
+          />
+
+          {effects.glow && (
+            <div className="absolute inset-0 bg-gradient-radial from-[var(--theme-accent)]/20 via-transparent to-transparent" />
+          )}
+
+          {/* Gradient Overlay */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/50 to-black/80" />
+
+          {/* Content */}
+          <div className="relative z-10 flex flex-col min-h-[85vh] px-6 pt-24 pb-8">
+            <div className="flex-1 flex flex-col justify-between">
+              {/* Top Section */}
+              <div>
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex items-center justify-between mb-4"
+                >
+                  {isEditMode && !isPreviewMode ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          transition={{ duration: 0.15 }}
+                          className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border border-[var(--theme-accent)]/30 px-3 py-1.5 rounded-full text-xs font-medium inline-flex items-center gap-1.5"
+                        >
+                          {selectedSport}
+                          <ChevronDown className="w-3 h-3" />
+                        </motion.button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="bg-black/90 backdrop-blur-xl border-white/10">
+                        <DropdownMenuItem
+                          onClick={() => setSelectedSport("Badminton")}
+                          className="text-white focus:bg-[var(--theme-accent)]/20 focus:text-[var(--theme-accent-light)]"
+                        >
+                          Badminton
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setSelectedSport("Pickleball")}
+                          className="text-white focus:bg-[var(--theme-accent)]/20 focus:text-[var(--theme-accent-light)]"
+                        >
+                          Pickleball
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setSelectedSport("Volleyball")}
+                          className="text-white focus:bg-[var(--theme-accent)]/20 focus:text-[var(--theme-accent-light)]"
+                        >
+                          Volleyball
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setSelectedSport("Futsal")}
+                          className="text-white focus:bg-[var(--theme-accent)]/20 focus:text-[var(--theme-accent-light)]"
+                        >
+                          Futsal
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30 px-3 py-1.5 text-xs font-medium">
+                      {selectedSport}
+                    </Badge>
+                  )}
+
+                  {isEditMode && !isPreviewMode && (
+                    <motion.button
+                      onClick={() => setIsCoverPickerOpen(true)}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ duration: 0.15 }}
+                      className="bg-white/10 border border-white/20 backdrop-blur-sm px-3 py-1.5 rounded-full text-xs font-medium text-white inline-flex items-center gap-1.5"
+                    >
+                      <Upload className="w-3 h-3" />
+                      Change cover
+                    </motion.button>
+                  )}
+                </motion.div>
+
+                <div className="space-y-6">
+                  <div className="space-y-4">
+                    {isEditMode && !isPreviewMode ? (
+                      <div className="space-y-3">
+                        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-4">
+                          <input
+                            type="text"
+                            value={eventTitle}
+                            onChange={(e) => setEventTitle(e.target.value)}
+                            className={`bg-transparent border-none text-4xl font-bold text-white w-full focus:outline-none focus:ring-0 p-0 text-center ${TITLE_FONTS[titleFont]}`}
+                            placeholder="Event title"
+                          />
+                        </div>
+                        {/* Font picker */}
+                        <div className="flex items-center justify-center gap-2">
+                          {(Object.keys(TITLE_FONTS) as Array<keyof typeof TITLE_FONTS>).map((font) => (
+                            <button
+                              key={font}
+                              onClick={() => setTitleFont(font)}
+                              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                                titleFont === font
+                                  ? "bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border border-[var(--theme-accent)]/40"
+                                  : "bg-white/5 text-white/60 border border-white/10 hover:bg-white/10"
+                              }`}
+                            >
+                              {font}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <h1
+                        className={`text-4xl font-bold text-white ${isPreviewMode ? "text-left" : "text-center"} ${TITLE_FONTS[titleFont]}`}
+                      >
+                        {eventTitle}
+                      </h1>
+                    )}
+
+                    {isEditMode && !isPreviewMode ? (
+                      <>
+                        <div className="space-y-3">
+                          {/* Date & Time Button */}
+                          <motion.button
+                            onClick={() => setIsDateModalOpen(true)}
+                            whileHover={{ scale: 1.01 }}
+                            whileTap={{ scale: 0.99 }}
+                            transition={{ duration: 0.15 }}
+                            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]"
+                          >
+                            <Calendar className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-xs text-white/50 uppercase tracking-wide mb-0.5">Date & Time</p>
+                              <p className="text-white/90 font-medium">{eventDate}</p>
+                            </div>
+                            <ChevronRight className="w-5 h-5 text-white/40 flex-shrink-0" />
+                          </motion.button>
+
+                          {/* Location Button */}
+                          <motion.button
+                            onClick={() => setIsLocationModalOpen(true)}
+                            whileHover={{ scale: 1.01 }}
+                            whileTap={{ scale: 0.99 }}
+                            transition={{ duration: 0.15 }}
+                            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]"
+                          >
+                            <MapPin className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-xs text-white/50 uppercase tracking-wide mb-0.5">Location</p>
+                              <p className="text-white/90 font-medium">{eventLocation}</p>
+                            </div>
+                            <ChevronRight className="w-5 h-5 text-white/40 flex-shrink-0" />
+                          </motion.button>
+
+                          <motion.div
+                            whileHover={{ scale: 1.01 }}
+                            whileTap={{ scale: 0.99 }}
+                            transition={{ duration: 0.15 }}
+                            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 flex items-center gap-3 min-h-[54px]"
+                          >
+                            <DollarSign className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-xs text-white/50 uppercase tracking-wide mb-0.5">Cost per person</p>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-white/90 font-medium">$</span>
+                                <input
+                                  type="number"
+                                  value={eventPrice}
+                                  onChange={(e) => setEventPrice(Number(e.target.value))}
+                                  onBlur={handleCostBlur}
+                                  min={0}
+                                  step={1}
+                                  className="bg-transparent border-none text-white/90 font-medium w-16 focus:outline-none focus:ring-0 p-0"
+                                />
+                                <span className="text-white/90 font-medium">per person</span>
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          <motion.div
+                            whileHover={{ scale: 1.01 }}
+                            whileTap={{ scale: 0.99 }}
+                            transition={{ duration: 0.15 }}
+                            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 flex items-center gap-3 min-h-[54px]"
+                          >
+                            <Users className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-xs text-white/50 uppercase tracking-wide mb-0.5">Spots</p>
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="number"
+                                  value={eventCapacity}
+                                  onChange={(e) => setEventCapacity(Number(e.target.value))}
+                                  onBlur={handleSpotsBlur}
+                                  min={1}
+                                  step={1}
+                                  className="bg-transparent border-none text-white/90 font-medium w-16 focus:outline-none focus:ring-0 p-0"
+                                />
+                                <span className="text-white/90 font-medium">spots available</span>
+                              </div>
+                            </div>
+                          </motion.div>
+                        </div>
+                      </>
+                    ) : (
+                      /* Preview mode shows regular text display */
+                      <div className="space-y-4">
+                        <div className="flex items-start gap-3">
+                          <Calendar className="w-5 h-5 text-white/60 mt-0.5" />
+                          <p className="text-base text-white/90">{eventDate}</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <MapPin className="w-5 h-5 text-white/60 mt-0.5" />
+                          <p className="text-base text-white/90">{eventLocation}</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <DollarSign className="w-5 h-5 text-white/60 mt-0.5" />
+                          <p className="text-base text-white/90">${eventPrice} per person</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <Users className="w-5 h-5 text-white/60 mt-0.5" />
+                          <p className="text-base text-white/90">{eventCapacity} spots total</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)]" />
+                    <div>
+                      <p className="text-xs text-white/50 uppercase tracking-wide">Hosted by</p>
+                      {isEditMode && !isPreviewMode ? (
+                        <input
+                          type="text"
+                          value={hostName}
+                          onChange={(e) => setHostName(e.target.value)}
+                          onBlur={handleHostNameBlur}
+                          className="bg-transparent border-none text-white font-medium focus:outline-none focus:ring-0 p-0"
+                        />
+                      ) : (
+                        <p className="text-white font-medium">{hostName}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {isEditMode && !isPreviewMode && (
+                    <div className="flex flex-col gap-2 pt-4">
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        transition={{ duration: 0.15 }}
+                        className="bg-white/10 border border-white/20 text-white backdrop-blur-sm px-4 py-3 rounded-full text-sm font-medium flex items-center justify-center gap-2"
+                      >
+                        <Copy className="w-4 h-4" />
+                        Copy invite link
+                      </motion.button>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        transition={{ duration: 0.15 }}
+                        className="bg-red-500/20 border border-red-500/30 text-red-100 backdrop-blur-sm px-4 py-3 rounded-full text-sm font-medium flex items-center justify-center gap-2"
+                      >
+                        <X className="w-4 h-4" />
+                        Close session
+                      </motion.button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
+        <div className="px-6 pt-8 pb-32 space-y-4">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.1 }}
+          >
+            <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
+              <h2 className="text-lg font-semibold text-white mb-3">About this session</h2>
+              {isEditMode && !isPreviewMode ? (
+                <textarea
+                  ref={textareaRef}
+                  value={eventDescription}
+                  onChange={(e) => setEventDescription(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded-lg p-3 text-white/90 text-sm leading-relaxed w-full focus:outline-none focus:ring-2 focus:ring-[var(--theme-accent)]/50 resize-none overflow-hidden"
+                  rows={1}
+                />
+              ) : (
+                <p className="text-white/70 text-sm leading-relaxed">{eventDescription}</p>
+              )}
+            </Card>
+          </motion.div>
+
+          {(!isEditMode || isPreviewMode) && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.2 }}
+            >
+              <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
+                <h2 className="text-lg font-semibold text-white mb-3">Location</h2>
+                <p className="text-white/70 text-sm mb-4">{eventLocation}</p>
+                <div className="w-full h-48 rounded-lg overflow-hidden bg-slate-800">
+                  <iframe
+                    width="100%"
+                    height="100%"
+                    frameBorder="0"
+                    src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3022.2!2d-73.98!3d40.75!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zNDDCsDQ1JzAwLjAiTiA3M8KwNTgnNDguMCJX!5e0!3m2!1sen!2sus!4v1234567890"
+                    style={{ border: 0 }}
+                    allowFullScreen
+                    loading="lazy"
+                  />
+                </div>
+              </Card>
+            </motion.div>
+          )}
+
+          {(!isEditMode || isPreviewMode) && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.3 }}
+            >
+              <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-white">Going</h2>
+                  <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30">
+                    5 / {eventCapacity}
+                  </Badge>
+                </div>
+                <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <motion.div
+                      key={i}
+                      whileHover={{ scale: 1.05, y: -2 }}
+                      transition={{ duration: 0.2 }}
+                      className="flex flex-col items-center gap-2 min-w-[80px]"
+                    >
+                      <div className="relative">
+                        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] p-0.5">
+                          <div className="w-full h-full rounded-full bg-slate-900" />
+                        </div>
+                      </div>
+                      <span className="text-xs text-white/70 text-center">User {i}</span>
+                    </motion.div>
+                  ))}
+                </div>
+              </Card>
+            </motion.div>
+          )}
+
+          {isEditMode && !isPreviewMode && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.2 }}
+            >
+              <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
+                <h2 className="text-lg font-semibold text-white mb-4">Payment details</h2>
+
+                {/* Upload QR Section */}
+                <div className="mb-6">
+                  <label className="text-sm text-white/70 mb-2 block">Upload QR Code</label>
+                  {paymentQrImage ? (
+                    <div className="relative">
+                      <img
+                        src={paymentQrImage || "/placeholder.svg"}
+                        alt="Payment QR"
+                        className="w-full max-w-[200px] rounded-lg"
+                      />
+                      <button
+                        onClick={() => setPaymentQrImage(null)}
+                        className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-1"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center hover:border-[var(--theme-accent)]/50 transition-colors cursor-pointer block">
+                      <input type="file" accept="image/*" onChange={handlePaymentImageUpload} className="hidden" />
+                      <ImageIcon className="w-8 h-8 text-white/40 mx-auto mb-2" />
+                      <p className="text-sm text-white/60">Upload Touch 'n Go / Maybank QR</p>
+                      <p className="text-xs text-white/40 mt-1">or bank transfer screenshot</p>
+                    </label>
+                  )}
+                </div>
+
+                {/* Bank Details */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-sm text-white/70 mb-1.5 block">Bank Name</label>
+                    <Input
+                      value={bankName}
+                      onChange={(e) => setBankName(e.target.value)}
+                      placeholder="e.g. Maybank"
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:ring-[var(--theme-accent)]/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm text-white/70 mb-1.5 block">Account Number</label>
+                    <Input
+                      value={accountNumber}
+                      onChange={(e) => setAccountNumber(e.target.value)}
+                      placeholder="1234567890"
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:ring-[var(--theme-accent)]/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm text-white/70 mb-1.5 block">Account Name</label>
+                    <Input
+                      value={accountName}
+                      onChange={(e) => setAccountName(e.target.value)}
+                      placeholder="Your name"
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:ring-[var(--theme-accent)]/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm text-white/70 mb-1.5 block">Instructions (optional)</label>
+                    <Textarea
+                      value={paymentNotes}
+                      onChange={(e) => setPaymentNotes(e.target.value)}
+                      placeholder="e.g. Please include your name in the transfer notes"
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:ring-[var(--theme-accent)]/50 min-h-[80px]"
+                    />
+                  </div>
+                </div>
+              </Card>
+            </motion.div>
+          )}
+
+          {(!isEditMode || isPreviewMode) && (bankName || accountNumber || accountName || paymentQrImage) && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.4 }}
+            >
+              <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
+                <h2 className="text-lg font-semibold text-white mb-4">Payment details</h2>
+
+                {paymentQrImage && (
+                  <div className="mb-4">
+                    <img
+                      src={paymentQrImage || "/placeholder.svg"}
+                      alt="Payment QR"
+                      className="w-full max-w-[200px] rounded-lg mx-auto"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  {bankName && (
+                    <div>
+                      <p className="text-xs text-white/50 uppercase tracking-wide">Bank Name</p>
+                      <p className="text-white/90 font-medium">{bankName}</p>
+                    </div>
+                  )}
+                  {accountNumber && (
+                    <div>
+                      <p className="text-xs text-white/50 uppercase tracking-wide">Account Number</p>
+                      <p className="text-white/90 font-medium">{accountNumber}</p>
+                    </div>
+                  )}
+                  {accountName && (
+                    <div>
+                      <p className="text-xs text-white/50 uppercase tracking-wide">Account Name</p>
+                      <p className="text-white/90 font-medium">{accountName}</p>
+                    </div>
+                  )}
+                  {paymentNotes && (
+                    <div>
+                      <p className="text-xs text-white/50 uppercase tracking-wide">Instructions</p>
+                      <p className="text-white/70 text-sm">{paymentNotes}</p>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            </motion.div>
+          )}
+
+          {(!isEditMode || isPreviewMode) && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.5 }}
+            >
+              <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
+                <h2 className="text-lg font-semibold text-white mb-3">Upload payment proof</h2>
+                <p className="text-sm text-white/60 mb-4">
+                  Please upload your payment confirmation to secure your spot.
+                </p>
+                {proofImage ? (
+                  <div className="relative">
+                    <img src={proofImage || "/placeholder.svg"} alt="Payment proof" className="w-full rounded-lg" />
+                    <button
+                      onClick={() => setProofImage(null)}
+                      className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-2"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center hover:border-[var(--theme-accent)]/50 transition-colors cursor-pointer block">
+                    <input type="file" accept="image/*" onChange={handleProofImageUpload} className="hidden" />
+                    <Upload className="w-8 h-8 text-white/40 mx-auto mb-2" />
+                    <p className="text-sm text-white/60">Click to upload or drag and drop</p>
+                    <p className="text-xs text-white/40 mt-1">Screenshot or photo</p>
+                  </label>
+                )}
+              </Card>
+            </motion.div>
+          )}
+        </div>
+      </div>
+
+      <Dialog open={isDateModalOpen} onOpenChange={setIsDateModalOpen}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold">Set a date</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 mt-4">
+            {suggestedDates.map((date) => (
+              <motion.button
+                key={date}
+                onClick={() => handleDateSave(date)}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.99 }}
+                transition={{ duration: 0.15 }}
+                className="w-full bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 text-left flex items-center justify-between group"
+              >
+                <span className="text-white/90">{date}</span>
+                {eventDate === date && <Check className="w-5 h-5 text-[var(--theme-accent-light)]" />}
+              </motion.button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isLocationModalOpen} onOpenChange={setIsLocationModalOpen}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold">Search location</DialogTitle>
+          </DialogHeader>
+          <div className="mt-4">
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+              <Input
+                placeholder="Search for a location..."
+                className="bg-white/5 border-white/10 text-white placeholder:text-white/40 pl-10 focus:ring-[var(--theme-accent)]/50"
+              />
+            </div>
+            <div className="space-y-2">
+              {suggestedLocations.map((location) => (
+                <motion.button
+                  key={location}
+                  onClick={() => handleLocationSave(location)}
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.99 }}
+                  transition={{ duration: 0.15 }}
+                  className="w-full bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 text-left flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-3">
+                    <MapPin className="w-5 h-5 text-[var(--theme-accent-light)]" />
+                    <span className="text-white/90">{location}</span>
+                  </div>
+                  {eventLocation === location && <Check className="w-5 h-5 text-[var(--theme-accent-light)]" />}
+                </motion.button>
+              ))}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isCoverPickerOpen} onOpenChange={setIsCoverPickerOpen}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold">Choose a cover</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            {COVER_IMAGES.map((image, index) => (
+              <motion.button
+                key={index}
+                onClick={() => handleCoverSelect(image)}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                transition={{ duration: 0.15 }}
+                className={`relative aspect-video rounded-lg overflow-hidden border-2 ${
+                  coverImage === image ? "border-[var(--theme-accent)]" : "border-white/10"
+                }`}
+              >
+                <img
+                  src={image || "/placeholder.svg"}
+                  alt={`Cover option ${index + 1}`}
+                  className="w-full h-full object-cover"
+                />
+                {coverImage === image && (
+                  <div className="absolute inset-0 bg-[var(--theme-accent)]/20 flex items-center justify-center">
+                    <Check className="w-8 h-8 text-[var(--theme-accent-light)]" />
+                  </div>
+                )}
+              </motion.button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {isEditMode && !isPreviewMode && (
+        <EditorBottomBar
+          onPreview={() => setIsPreviewMode(true)}
+          theme={theme}
+          onThemeChange={setTheme}
+          effects={effects}
+          onEffectsChange={setEffects}
+        />
+      )}
+
+      {/* Sticky RSVP Dock - Only show in preview mode or when not in edit mode */}
+      {(!isEditMode || isPreviewMode) && (
+        <motion.div
+          initial={{ y: 100 }}
+          animate={{ y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="fixed bottom-0 left-0 right-0 z-40 pb-safe"
+        >
+          <div className="mx-auto max-w-md px-4 pb-4">
+            <div className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-2xl flex gap-3">
+              <Button className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20">
+                Join session
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1 bg-transparent border-white/20 text-white hover:bg-white/10 rounded-full h-12"
+              >
+                Decline
+              </Button>
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  )
+}

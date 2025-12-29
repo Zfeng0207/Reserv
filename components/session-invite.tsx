@@ -20,6 +20,8 @@ import {
   Check,
   ImageIcon,
   ChevronDown,
+  Sun,
+  Moon,
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -93,6 +95,22 @@ export function SessionInvite({
   const [scrolled, setScrolled] = useState(false)
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
   const { toast } = useToast()
+
+  // UI Mode state (dark/light) with localStorage persistence
+  const [uiMode, setUiMode] = useState<"dark" | "light">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("reserv-ui-mode")
+      return (saved === "light" || saved === "dark") ? saved : "dark"
+    }
+    return "dark"
+  })
+
+  // Persist uiMode to localStorage whenever it changes
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("reserv-ui-mode", uiMode)
+    }
+  }, [uiMode])
 
   // Sync preview mode with URL query parameter
   useEffect(() => {
@@ -465,7 +483,7 @@ export function SessionInvite({
       if (!sessionId || sessionId === "new" || sessionId === "edit") {
         // For new sessions, just update local state without saving to DB
         setHostName(newHostName)
-        toast({
+    toast({
           title: "Host name updated",
           description: "Host name will be saved when you publish the session.",
           variant: "success",
@@ -564,9 +582,27 @@ export function SessionInvite({
     // The useEffect will handle the pending publish
   }
 
+  // Reusable class tokens based on uiMode
+  const glassCard = uiMode === "dark" 
+    ? "bg-black/30 border-white/20 text-white backdrop-blur-sm" 
+    : "bg-white/70 border-black/10 text-black backdrop-blur-sm"
+  
+  const glassPill = uiMode === "dark"
+    ? "bg-black/30 border-white/20 text-white backdrop-blur-sm"
+    : "bg-white/70 border-black/10 text-black backdrop-blur-sm"
+  
+  const mutedText = uiMode === "dark" ? "text-white/70" : "text-black/60"
+  const strongText = uiMode === "dark" ? "text-white/90" : "text-black/90"
+  const inputBg = uiMode === "dark" ? "bg-white/5" : "bg-black/5"
+  const inputBorder = uiMode === "dark" ? "border-white/10" : "border-black/10"
+  const inputPlaceholder = uiMode === "dark" ? "placeholder:text-white/30" : "placeholder:text-black/40"
+
   return (
     <div
-      className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900"
+      className={`min-h-screen ${uiMode === "dark" 
+        ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white" 
+        : "bg-white text-black"}`}
+      data-ui={uiMode}
       data-theme={theme}
       data-effect-grain={effects.grain}
       data-effect-glow={effects.glow}
@@ -619,19 +655,19 @@ export function SessionInvite({
 
       {/* Main Content - Hero Section */}
       <LayoutGroup>
-        <div className="relative">
-          {/* Hero Card with Full-Height Immersive Background */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6 }}
-            className="relative min-h-[85vh] overflow-hidden"
-          >
+      <div className="relative">
+        {/* Hero Card with Full-Height Immersive Background */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6 }}
+          className="relative min-h-[85vh] overflow-hidden"
+        >
             {/* Background Image or Gradient */}
             {optimisticCoverUrl ? (
-              <div
-                className="absolute inset-0 bg-cover bg-center"
-                style={{
+          <div
+            className="absolute inset-0 bg-cover bg-center"
+            style={{
                   backgroundImage: `url("${encodeURI(optimisticCoverUrl)}")`,
                 }}
               />
@@ -642,9 +678,9 @@ export function SessionInvite({
               />
             )}
 
-            {effects.glow && (
-              <div className="absolute inset-0 bg-gradient-radial from-[var(--theme-accent)]/20 via-transparent to-transparent" />
-            )}
+          {effects.glow && (
+            <div className="absolute inset-0 bg-gradient-radial from-[var(--theme-accent)]/20 via-transparent to-transparent" />
+          )}
 
             {/* Gradient Overlay - Lighter for better visibility */}
             <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/30 to-black/60" />
@@ -674,7 +710,7 @@ export function SessionInvite({
               </motion.div>
             )}
 
-            {/* Content */}
+          {/* Content */}
             <motion.div
               layout
               transition={{ duration: 0.22, ease: "easeOut" }}
@@ -682,14 +718,14 @@ export function SessionInvite({
                 isEditMode && !isPreviewMode ? "pt-16" : "pt-24"
               }`}
             >
-              <div className="flex-1 flex flex-col justify-between">
-                {/* Top Section */}
+            <div className="flex-1 flex flex-col justify-between">
+              {/* Top Section */}
                 <motion.div layout transition={{ duration: 0.22, ease: "easeOut" }}>
-                  <motion.div
+                <motion.div
                     layout
                     transition={{ duration: 0.22, ease: "easeOut" }}
-                    className="flex items-center justify-between mb-4"
-                  >
+                  className="flex items-center justify-between mb-4"
+                >
                   {isEditMode && !isPreviewMode ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -742,13 +778,13 @@ export function SessionInvite({
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       transition={{ duration: 0.15 }}
-                      className="bg-white/10 border border-white/20 backdrop-blur-sm px-3 py-1.5 rounded-full text-xs font-medium text-white inline-flex items-center gap-1.5"
+                      className={`${glassPill} px-3 py-1.5 rounded-full text-xs font-medium inline-flex items-center gap-1.5`}
                     >
                       <Upload className="w-3 h-3" />
                       Change cover
                     </motion.button>
                   )}
-                  </motion.div>
+                </motion.div>
 
                   <motion.div
                     layout
@@ -762,13 +798,13 @@ export function SessionInvite({
                     >
                     {isEditMode && !isPreviewMode ? (
                       <div className="space-y-3">
-                        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-4">
+                        <div className={`${uiMode === "dark" ? "bg-white/5 border-white/10" : "bg-white/70 border-black/10"} backdrop-blur-sm rounded-2xl p-4`}>
                           <input
                             type="text"
                             value={eventTitle}
                             onChange={(e) => setEventTitle(e.target.value)}
-                            className={`bg-transparent border-none text-4xl font-bold text-white w-full focus:outline-none focus:ring-0 p-0 text-center ${TITLE_FONTS[titleFont]}`}
-                            placeholder="Event title"
+                          className={`bg-transparent border-none text-4xl font-bold ${uiMode === "dark" ? "text-white" : "text-black"} w-full focus:outline-none focus:ring-0 p-0 text-center ${TITLE_FONTS[titleFont]}`}
+                          placeholder="Event title"
                           />
                         </div>
                         {/* Font picker */}
@@ -779,8 +815,12 @@ export function SessionInvite({
                               onClick={() => setTitleFont(font)}
                               className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
                                 titleFont === font
-                                  ? "bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border border-[var(--theme-accent)]/40"
-                                  : "bg-white/5 text-white/60 border border-white/10 hover:bg-white/10"
+                                  ? uiMode === "dark"
+                                    ? "bg-white/10 text-[var(--theme-accent-light)] border border-[var(--theme-accent)]/40"
+                                    : "bg-white/70 text-[var(--theme-accent-light)] border border-[var(--theme-accent)]/40"
+                                  : uiMode === "dark"
+                                    ? "bg-white/5 text-white/60 border border-white/10 hover:bg-white/10"
+                                    : "bg-white/70 text-black/70 border border-black/10 hover:bg-white/80"
                               }`}
                             >
                               {font}
@@ -792,7 +832,7 @@ export function SessionInvite({
                       <motion.h1
                         layout
                         transition={{ duration: 0.22, ease: "easeOut" }}
-                        className={`text-4xl font-bold text-white ${isPreviewMode ? "text-left" : "text-center"} ${TITLE_FONTS[titleFont]}`}
+                        className={`text-4xl font-bold ${uiMode === "dark" ? "text-black" : "text-white"} ${isPreviewMode ? "text-left" : "text-center"} ${TITLE_FONTS[titleFont]}`}
                       >
                         {eventTitle}
                       </motion.h1>
@@ -807,14 +847,14 @@ export function SessionInvite({
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             transition={{ duration: 0.15 }}
-                            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]"
+                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]`}
                           >
                             <Calendar className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
-                              <p className="text-xs text-white/70 uppercase tracking-wide mb-0.5">Date & Time</p>
-                              <p className="text-white/90 font-medium">{eventDate}</p>
+                              <p className={`text-xs ${mutedText} uppercase tracking-wide mb-0.5`}>Date & Time</p>
+                              <p className={`${strongText} font-medium`}>{eventDate}</p>
                             </div>
-                            <ChevronRight className="w-5 h-5 text-white/40 flex-shrink-0" />
+                            <ChevronRight className={`w-5 h-5 ${uiMode === "dark" ? "text-white/40" : "text-black/40"} flex-shrink-0`} />
                           </motion.button>
 
                           {/* Location Button */}
@@ -823,27 +863,27 @@ export function SessionInvite({
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             transition={{ duration: 0.15 }}
-                            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]"
+                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]`}
                           >
                             <MapPin className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
-                              <p className="text-xs text-white/70 uppercase tracking-wide mb-0.5">Location</p>
-                              <p className="text-white/90 font-medium">{eventLocation}</p>
+                              <p className={`text-xs ${mutedText} uppercase tracking-wide mb-0.5`}>Location</p>
+                              <p className={`${strongText} font-medium`}>{eventLocation}</p>
                             </div>
-                            <ChevronRight className="w-5 h-5 text-white/40 flex-shrink-0" />
+                            <ChevronRight className={`w-5 h-5 ${uiMode === "dark" ? "text-white/40" : "text-black/40"} flex-shrink-0`} />
                           </motion.button>
 
                           <motion.div
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             transition={{ duration: 0.15 }}
-                            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 flex items-center gap-3 min-h-[54px]"
+                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 min-h-[54px]`}
                           >
                             <DollarSign className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
-                              <p className="text-xs text-white/70 uppercase tracking-wide mb-0.5">Cost per person</p>
+                              <p className={`text-xs ${mutedText} uppercase tracking-wide mb-0.5`}>Cost per person</p>
                               <div className="flex items-center gap-1.5">
-                                <span className="text-white/90 font-medium">$</span>
+                                <span className={`${strongText} font-medium`}>$</span>
                                 <input
                                   type="number"
                                   value={eventPrice}
@@ -851,9 +891,9 @@ export function SessionInvite({
                                   onBlur={handleCostBlur}
                                   min={0}
                                   step={1}
-                                  className="bg-transparent border-none text-white/90 font-medium w-16 focus:outline-none focus:ring-0 p-0"
+                                  className={`bg-transparent border-none ${strongText} font-medium w-16 focus:outline-none focus:ring-0 p-0`}
                                 />
-                                <span className="text-white/90 font-medium">per person</span>
+                                <span className={`${strongText} font-medium`}>per person</span>
                               </div>
                             </div>
                           </motion.div>
@@ -862,11 +902,11 @@ export function SessionInvite({
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             transition={{ duration: 0.15 }}
-                            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 flex items-center gap-3 min-h-[54px]"
+                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 min-h-[54px]`}
                           >
                             <Users className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
-                              <p className="text-xs text-white/70 uppercase tracking-wide mb-0.5">Spots</p>
+                              <p className={`text-xs ${mutedText} uppercase tracking-wide mb-0.5`}>Spots</p>
                               <div className="flex items-center gap-1.5">
                                 <input
                                   type="number"
@@ -875,9 +915,9 @@ export function SessionInvite({
                                   onBlur={handleSpotsBlur}
                                   min={1}
                                   step={1}
-                                  className="bg-transparent border-none text-white/90 font-medium w-16 focus:outline-none focus:ring-0 p-0"
+                                  className={`bg-transparent border-none ${strongText} font-medium w-16 focus:outline-none focus:ring-0 p-0`}
                                 />
-                                <span className="text-white/90 font-medium">spots available</span>
+                                <span className={`${strongText} font-medium`}>spots available</span>
                               </div>
                             </div>
                           </motion.div>
@@ -887,20 +927,20 @@ export function SessionInvite({
                       /* Preview mode shows regular text display */
                       <div className="space-y-4">
                         <div className="flex items-start gap-3">
-                          <Calendar className="w-5 h-5 text-white/60 mt-0.5" />
-                          <p className="text-base text-white/90">{eventDate}</p>
+                          <Calendar className={`w-5 h-5 ${uiMode === "dark" ? "text-black/60" : "text-white/60"} mt-0.5`} />
+                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"}`}>{eventDate}</p>
                         </div>
                         <div className="flex items-start gap-3">
-                          <MapPin className="w-5 h-5 text-white/60 mt-0.5" />
-                          <p className="text-base text-white/90">{eventLocation}</p>
+                          <MapPin className={`w-5 h-5 ${uiMode === "dark" ? "text-black/60" : "text-white/60"} mt-0.5`} />
+                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"}`}>{eventLocation}</p>
                         </div>
                         <div className="flex items-start gap-3">
-                          <DollarSign className="w-5 h-5 text-white/60 mt-0.5" />
-                          <p className="text-base text-white/90">${eventPrice} per person</p>
+                          <DollarSign className={`w-5 h-5 ${uiMode === "dark" ? "text-black/60" : "text-white/60"} mt-0.5`} />
+                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"}`}>${eventPrice} per person</p>
                         </div>
                         <div className="flex items-start gap-3">
-                          <Users className="w-5 h-5 text-white/60 mt-0.5" />
-                          <p className="text-base text-white/90">{eventCapacity} spots total</p>
+                          <Users className={`w-5 h-5 ${uiMode === "dark" ? "text-black/60" : "text-white/60"} mt-0.5`} />
+                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"}`}>{eventCapacity} spots total</p>
                         </div>
                       </div>
                     )}
@@ -911,12 +951,12 @@ export function SessionInvite({
                       transition={{ duration: 0.22, ease: "easeOut" }}
                       className="flex items-center gap-3 pt-2"
                     >
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)]" />
-                      <div>
-                        <p className="text-xs text-white/70 uppercase tracking-wide">Hosted by</p>
-                        {isEditMode && !isPreviewMode ? (
-                          <input
-                            type="text"
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)]" />
+                    <div>
+                        <p className={`text-xs ${uiMode === "dark" ? "text-black/70" : "text-white/70"} uppercase tracking-wide`}>Hosted by</p>
+                      {isEditMode && !isPreviewMode ? (
+                        <input
+                          type="text"
                             value={hostNameInput}
                             onChange={(e) => {
                               const value = e.target.value
@@ -931,11 +971,11 @@ export function SessionInvite({
                             maxLength={40}
                             className="bg-transparent border-none border-b border-transparent text-white font-medium focus:outline-none focus:ring-0 focus:border-b focus:border-white/30 p-0 transition-colors disabled:opacity-50 min-w-[80px]"
                             placeholder={getUserProfileName() ?? "Host"}
-                          />
-                        ) : (
-                          <p className="text-white font-medium">{displayHostName}</p>
-                        )}
-                      </div>
+                        />
+                      ) : (
+                          <p className={`font-medium ${uiMode === "dark" ? "text-black" : "text-white"}`}>{displayHostName}</p>
+                      )}
+                    </div>
                     </motion.div>
                   </motion.div>
 
@@ -945,7 +985,7 @@ export function SessionInvite({
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         transition={{ duration: 0.15 }}
-                        className="bg-white/10 border border-white/20 text-white backdrop-blur-sm px-4 py-3 rounded-full text-sm font-medium flex items-center justify-center gap-2"
+                        className={`${uiMode === "dark" ? "bg-white/10 border-white/20 text-white" : "bg-white/70 border-black/10 text-black"} backdrop-blur-sm px-4 py-3 rounded-full text-sm font-medium flex items-center justify-center gap-2`}
                       >
                         <Copy className="w-4 h-4" />
                         Copy invite link
@@ -962,9 +1002,9 @@ export function SessionInvite({
                     </div>
                   )}
                 </motion.div>
-              </div>
+          </div>
             </motion.div>
-          </motion.div>
+        </motion.div>
 
           <motion.div
             layout
@@ -976,18 +1016,18 @@ export function SessionInvite({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.1 }}
           >
-            <Card className="border-white/20 bg-black/30 backdrop-blur-sm p-6">
-              <h2 className="text-lg font-semibold text-white mb-3">About this session</h2>
+            <Card className={`${glassCard} p-6`}>
+              <h2 className={`text-lg font-semibold ${strongText} mb-3`}>About this session</h2>
               {isEditMode && !isPreviewMode ? (
                 <textarea
                   ref={textareaRef}
                   value={eventDescription}
                   onChange={(e) => setEventDescription(e.target.value)}
-                  className="bg-white/5 border border-white/10 rounded-lg p-3 text-white/90 text-sm leading-relaxed w-full focus:outline-none focus:ring-2 focus:ring-[var(--theme-accent)]/50 resize-none overflow-hidden"
+                  className={`${inputBg} ${inputBorder} ${inputPlaceholder} rounded-lg p-3 ${strongText} text-sm leading-relaxed w-full focus:outline-none focus:ring-2 focus:ring-[var(--theme-accent)]/50 resize-none overflow-hidden`}
                   rows={1}
                 />
               ) : (
-                <p className="text-white/70 text-sm leading-relaxed">{eventDescription}</p>
+                <p className={`${mutedText} text-sm leading-relaxed`}>{eventDescription}</p>
               )}
             </Card>
           </motion.div>
@@ -998,9 +1038,9 @@ export function SessionInvite({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.2 }}
             >
-              <Card className="border-white/20 bg-black/30 backdrop-blur-sm p-6">
-                <h2 className="text-lg font-semibold text-white mb-3">Location</h2>
-                <p className="text-white/70 text-sm mb-4">{eventLocation}</p>
+              <Card className={`${glassCard} p-6`}>
+                <h2 className={`text-lg font-semibold ${strongText} mb-3`}>Location</h2>
+                <p className={`${mutedText} text-sm mb-4`}>{eventLocation}</p>
                 <div className="w-full h-48 rounded-lg overflow-hidden bg-slate-800">
                   <iframe
                     width="100%"
@@ -1022,9 +1062,9 @@ export function SessionInvite({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.3 }}
             >
-              <Card className="border-white/20 bg-black/30 backdrop-blur-sm p-6">
+              <Card className={`${glassCard} p-6`}>
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-white">Going</h2>
+                  <h2 className={`text-lg font-semibold ${strongText}`}>Going</h2>
                   <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30">
                     5 / {eventCapacity}
                   </Badge>
@@ -1042,7 +1082,7 @@ export function SessionInvite({
                           <div className="w-full h-full rounded-full bg-slate-900" />
                         </div>
                       </div>
-                      <span className="text-xs text-white/70 text-center">User {i}</span>
+                      <span className={`text-xs ${mutedText} text-center`}>User {i}</span>
                     </motion.div>
                   ))}
                 </div>
@@ -1056,12 +1096,12 @@ export function SessionInvite({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.2 }}
             >
-              <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
-                <h2 className="text-lg font-semibold text-white mb-4">Payment details</h2>
+              <Card className={`${glassCard} p-6`}>
+                <h2 className={`text-lg font-semibold ${strongText} mb-4`}>Payment details</h2>
 
                 {/* Upload QR Section */}
                 <div className="mb-6">
-                  <label className="text-sm text-white/70 mb-2 block">Upload QR Code</label>
+                  <label className={`text-sm ${mutedText} mb-2 block`}>Upload QR Code</label>
                   {paymentQrImage ? (
                     <div className="relative">
                       <img
@@ -1098,30 +1138,30 @@ export function SessionInvite({
                     />
                   </div>
                   <div>
-                    <label className="text-sm text-white/70 mb-1.5 block">Account Number</label>
+                    <label className={`text-sm ${mutedText} mb-1.5 block`}>Account Number</label>
                     <Input
                       value={accountNumber}
                       onChange={(e) => setAccountNumber(e.target.value)}
                       placeholder="1234567890"
-                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:ring-[var(--theme-accent)]/50"
+                      className={`${inputBg} ${inputBorder} ${strongText} ${inputPlaceholder} focus:ring-[var(--theme-accent)]/50`}
                     />
                   </div>
                   <div>
-                    <label className="text-sm text-white/70 mb-1.5 block">Account Name</label>
+                    <label className={`text-sm ${mutedText} mb-1.5 block`}>Account Name</label>
                     <Input
                       value={accountName}
                       onChange={(e) => setAccountName(e.target.value)}
                       placeholder="Your name"
-                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:ring-[var(--theme-accent)]/50"
+                      className={`${inputBg} ${inputBorder} ${strongText} ${inputPlaceholder} focus:ring-[var(--theme-accent)]/50`}
                     />
                   </div>
                   <div>
-                    <label className="text-sm text-white/70 mb-1.5 block">Instructions (optional)</label>
+                    <label className={`text-sm ${mutedText} mb-1.5 block`}>Instructions (optional)</label>
                     <Textarea
                       value={paymentNotes}
                       onChange={(e) => setPaymentNotes(e.target.value)}
                       placeholder="e.g. Please include your name in the transfer notes"
-                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:ring-[var(--theme-accent)]/50 min-h-[80px]"
+                      className={`${inputBg} ${inputBorder} ${strongText} ${inputPlaceholder} focus:ring-[var(--theme-accent)]/50 min-h-[80px]`}
                     />
                   </div>
                 </div>
@@ -1135,8 +1175,8 @@ export function SessionInvite({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.4 }}
             >
-              <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
-                <h2 className="text-lg font-semibold text-white mb-4">Payment details</h2>
+              <Card className={`${glassCard} p-6`}>
+                <h2 className={`text-lg font-semibold ${strongText} mb-4`}>Payment details</h2>
 
                 {paymentQrImage && (
                   <div className="mb-4">
@@ -1151,26 +1191,26 @@ export function SessionInvite({
                 <div className="space-y-3">
                   {bankName && (
                     <div>
-                      <p className="text-xs text-white/70 uppercase tracking-wide">Bank Name</p>
-                      <p className="text-white/90 font-medium">{bankName}</p>
+                      <p className={`text-xs ${mutedText} uppercase tracking-wide`}>Bank Name</p>
+                      <p className={`${strongText} font-medium`}>{bankName}</p>
                     </div>
                   )}
                   {accountNumber && (
                     <div>
-                      <p className="text-xs text-white/70 uppercase tracking-wide">Account Number</p>
-                      <p className="text-white/90 font-medium">{accountNumber}</p>
+                      <p className={`text-xs ${mutedText} uppercase tracking-wide`}>Account Number</p>
+                      <p className={`${strongText} font-medium`}>{accountNumber}</p>
                     </div>
                   )}
                   {accountName && (
                     <div>
-                      <p className="text-xs text-white/70 uppercase tracking-wide">Account Name</p>
-                      <p className="text-white/90 font-medium">{accountName}</p>
+                      <p className={`text-xs ${mutedText} uppercase tracking-wide`}>Account Name</p>
+                      <p className={`${strongText} font-medium`}>{accountName}</p>
                     </div>
                   )}
                   {paymentNotes && (
                     <div>
-                      <p className="text-xs text-white/70 uppercase tracking-wide">Instructions</p>
-                      <p className="text-white/70 text-sm">{paymentNotes}</p>
+                      <p className={`text-xs ${mutedText} uppercase tracking-wide`}>Instructions</p>
+                      <p className={`${mutedText} text-sm`}>{paymentNotes}</p>
                     </div>
                   )}
                 </div>
@@ -1184,9 +1224,9 @@ export function SessionInvite({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.5 }}
             >
-              <Card className="border-white/10 bg-black/20 backdrop-blur-sm p-6">
-                <h2 className="text-lg font-semibold text-white mb-3">Upload payment proof</h2>
-                <p className="text-sm text-white/60 mb-4">
+              <Card className={`${glassCard} p-6`}>
+                <h2 className={`text-lg font-semibold ${strongText} mb-3`}>Upload payment proof</h2>
+                <p className={`text-sm ${mutedText} mb-4`}>
                   Please upload your payment confirmation to secure your spot.
                 </p>
                 {proofImage ? (
@@ -1323,7 +1363,7 @@ export function SessionInvite({
 
       {/* Editor Bottom Bar - Edit mode only */}
       <AnimatePresence>
-        {isEditMode && !isPreviewMode && (
+      {isEditMode && !isPreviewMode && (
           <motion.div
             key="editorbar"
             initial={{ y: 12, opacity: 0 }}
@@ -1331,17 +1371,17 @@ export function SessionInvite({
             exit={{ y: 12, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
           >
-            <EditorBottomBar
-              onPreview={() => handlePreviewModeChange(true)}
-              onPublish={handlePublish}
-              onSaveDraft={handleSaveDraft}
-              theme={theme}
-              onThemeChange={setTheme}
-              effects={effects}
-              onEffectsChange={setEffects}
-            />
+        <EditorBottomBar
+          onPreview={() => handlePreviewModeChange(true)}
+          onPublish={handlePublish}
+          onSaveDraft={handleSaveDraft}
+          theme={theme}
+          onThemeChange={setTheme}
+              uiMode={uiMode}
+              onUiModeChange={setUiMode}
+        />
           </motion.div>
-        )}
+      )}
       </AnimatePresence>
 
       {/* Login Dialog for publish gating */}
@@ -1353,30 +1393,44 @@ export function SessionInvite({
 
       {/* Sticky RSVP Dock - Only show in preview mode or when not in edit mode */}
       <AnimatePresence>
-        {(!isEditMode || isPreviewMode) && (
-          <motion.div
+      {(!isEditMode || isPreviewMode) && (
+        <motion.div
             key="rsvpdock"
             initial={{ y: 12, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 12, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed bottom-0 left-0 right-0 z-40 pb-safe"
-          >
+          className="fixed bottom-0 left-0 right-0 z-40 pb-safe"
+        >
           <div className="mx-auto max-w-md px-4 pb-4">
-            <div className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-2xl flex gap-3">
+            <div className={`${glassCard} rounded-2xl p-4 shadow-2xl flex gap-3`}>
               <Button className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20">
                 Join session
               </Button>
               <Button
                 variant="outline"
-                className="flex-1 bg-transparent border-white/20 text-white hover:bg-white/10 rounded-full h-12"
+                className={`flex-1 bg-transparent ${uiMode === "dark" ? "border-white/20 text-white hover:bg-white/10" : "border-black/20 text-black hover:bg-black/10"} rounded-full h-12`}
               >
                 Decline
               </Button>
+              {/* Light/Dark toggle for preview mode */}
+              {isPreviewMode && (
+                <button
+                  onClick={() => setUiMode(uiMode === "dark" ? "light" : "dark")}
+                  className={`w-12 h-12 rounded-full ${glassPill} flex items-center justify-center transition-colors`}
+                  aria-label={uiMode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                >
+                  {uiMode === "dark" ? (
+                    <Sun className="w-5 h-5" />
+                  ) : (
+                    <Moon className="w-5 h-5" />
+                  )}
+                </button>
+              )}
             </div>
           </div>
-          </motion.div>
-        )}
+        </motion.div>
+      )}
       </AnimatePresence>
     </div>
   )

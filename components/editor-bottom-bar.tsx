@@ -3,7 +3,7 @@
 import { useState, useEffect as ReactUseEffect } from "react"
 import * as React from "react"
 import { motion } from "framer-motion"
-import { Palette, Sparkles, Eye } from "lucide-react"
+import { Palette, Eye, Sun, Moon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription } from "@/components/ui/drawer"
@@ -17,12 +17,8 @@ interface EditorBottomBarProps {
   onSaveDraft?: () => void
   theme?: string
   onThemeChange?: (theme: string) => void
-  effects?: {
-    grain: boolean
-    glow: boolean
-    vignette: boolean
-  }
-  onEffectsChange?: (effects: { grain: boolean; glow: boolean; vignette: boolean }) => void
+  uiMode: "dark" | "light"
+  onUiModeChange: (mode: "dark" | "light") => void
 }
 
 export function EditorBottomBar({
@@ -31,29 +27,17 @@ export function EditorBottomBar({
   onSaveDraft,
   theme,
   onThemeChange,
-  effects,
-  onEffectsChange,
+  uiMode,
+  onUiModeChange,
 }: EditorBottomBarProps) {
   const [themeDrawerOpen, setThemeDrawerOpen] = useState(false)
-  const [effectDrawerOpen, setEffectDrawerOpen] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState(theme || "badminton")
-  const [localEffects, setLocalEffects] = useState(
-    effects || {
-      grain: true,
-      glow: false,
-      vignette: true,
-    }
-  )
   const { toast } = useToast()
 
   // Sync with parent state if provided
   ReactUseEffect(() => {
     if (theme) setSelectedTheme(theme)
   }, [theme])
-
-  ReactUseEffect(() => {
-    if (effects) setLocalEffects(effects)
-  }, [effects])
 
   const themes = [
     { id: "badminton", name: "Lime Green", color: "bg-lime-500" },
@@ -74,17 +58,6 @@ export function EditorBottomBar({
     })
   }
 
-  const handleEffectToggle = (effect: keyof typeof localEffects) => {
-    const updated = { ...localEffects, [effect]: !localEffects[effect] }
-    setLocalEffects(updated)
-    if (onEffectsChange) {
-      onEffectsChange(updated)
-    }
-    toast({
-      description: "Effect updated",
-      variant: "success",
-    })
-  }
 
   const handleSaveDraftClick = () => {
     if (onSaveDraft) {
@@ -118,18 +91,21 @@ export function EditorBottomBar({
                 <span className="text-xs text-white/60 group-hover:text-white/80 transition-colors">Theme</span>
               </button>
 
-              {/* Effect Button */}
+              {/* Light/Dark Mode Toggle */}
               <button
-                onClick={() => setEffectDrawerOpen(true)}
-                className="flex flex-col items-center gap-1.5 group relative"
+                onClick={() => onUiModeChange(uiMode === "dark" ? "light" : "dark")}
+                className="flex flex-col items-center gap-1.5 group"
               >
-                <Badge className="absolute -top-1 -right-1 bg-lime-500 text-black text-[10px] px-1.5 py-0 h-4 border-0">
-                  NEW
-                </Badge>
                 <div className="w-12 h-12 rounded-full bg-white/5 hover:bg-white/10 transition-colors flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-white/80 group-hover:text-white transition-colors" />
+                  {uiMode === "dark" ? (
+                    <Sun className="w-5 h-5 text-white/80 group-hover:text-white transition-colors" />
+                  ) : (
+                    <Moon className="w-5 h-5 text-white/80 group-hover:text-white transition-colors" />
+                  )}
                 </div>
-                <span className="text-xs text-white/60 group-hover:text-white/80 transition-colors">Effect</span>
+                <span className="text-xs text-white/60 group-hover:text-white/80 transition-colors">
+                  {uiMode === "dark" ? "Light" : "Dark"}
+                </span>
               </button>
 
               {/* Preview Button */}
@@ -204,49 +180,6 @@ export function EditorBottomBar({
         </DrawerContent>
       </Drawer>
 
-      {/* Effect Drawer */}
-      <Drawer open={effectDrawerOpen} onOpenChange={setEffectDrawerOpen}>
-        <DrawerContent className="bg-black/95 backdrop-blur-xl border-white/10">
-          <DrawerHeader>
-            <DrawerTitle className="text-white">Visual Effects</DrawerTitle>
-            <DrawerDescription className="text-white/60">Customize the look and feel</DrawerDescription>
-          </DrawerHeader>
-          <div className="p-4 pb-8 space-y-4">
-            {/* Grain Toggle */}
-            <div className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/10">
-              <div>
-                <Label htmlFor="grain" className="text-white font-medium">
-                  Grain
-                </Label>
-                <p className="text-xs text-white/60 mt-1">Add subtle texture overlay</p>
-              </div>
-              <Switch id="grain" checked={localEffects.grain} onCheckedChange={() => handleEffectToggle("grain")} />
-            </div>
-
-            {/* Glow Toggle */}
-            <div className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/10">
-              <div>
-                <Label htmlFor="glow" className="text-white font-medium">
-                  Glow
-                </Label>
-                <p className="text-xs text-white/60 mt-1">Add soft luminous effects</p>
-              </div>
-              <Switch id="glow" checked={localEffects.glow} onCheckedChange={() => handleEffectToggle("glow")} />
-            </div>
-
-            {/* Vignette Toggle */}
-            <div className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/10">
-              <div>
-                <Label htmlFor="vignette" className="text-white font-medium">
-                  Vignette
-                </Label>
-                <p className="text-xs text-white/60 mt-1">Darken edges for focus</p>
-              </div>
-              <Switch id="vignette" checked={localEffects.vignette} onCheckedChange={() => handleEffectToggle("vignette")} />
-            </div>
-          </div>
-        </DrawerContent>
-      </Drawer>
     </>
   )
 }

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { cn } from "@/lib/utils"
 import { useState, useEffect, useRef } from "react"
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion"
 import { useRouter, usePathname, useSearchParams } from "next/navigation"
@@ -78,12 +79,26 @@ const TITLE_FONTS = {
   Literary: "font-serif italic",
 }
 
+interface DemoParticipant {
+  name: string
+  avatar: string | null
+}
+
 interface SessionInviteProps {
   sessionId?: string
   initialCoverUrl?: string | null
   initialSport?: string | null
   initialEditMode?: boolean
   initialPreviewMode?: boolean
+  initialTitle?: string | null
+  initialDate?: string | null
+  initialLocation?: string | null
+  initialPrice?: number | null
+  initialCapacity?: number | null
+  initialHostName?: string | null
+  initialDescription?: string | null
+  demoMode?: boolean
+  demoParticipants?: DemoParticipant[]
 }
 
 export function SessionInvite({
@@ -92,8 +107,20 @@ export function SessionInvite({
   initialSport = null,
   initialEditMode = true,
   initialPreviewMode = false,
+  initialTitle = null,
+  initialDate = null,
+  initialLocation = null,
+  initialPrice = null,
+  initialCapacity = null,
+  initialHostName = null,
+  initialDescription = null,
+  demoMode = false,
+  demoParticipants = [],
 }: SessionInviteProps) {
   console.log(`[SessionInvite] Render:`, { sessionId, initialCoverUrl, initialSport, initialEditMode, initialPreviewMode })
+  
+  // Detect if this is an empty/new session
+  const isEmptySession = !sessionId || sessionId === "new" || sessionId === "edit"
   
   const router = useRouter()
   const pathname = usePathname()
@@ -104,6 +131,36 @@ export function SessionInvite({
   const [scrolled, setScrolled] = useState(false)
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
   const { toast } = useToast()
+
+  // Placeholder constants for validation
+  const PLACEHOLDERS = {
+    title: "Enter title here",
+    date: "Choose date",
+    location: "Enter location",
+    host: "Your name",
+  }
+
+  // Refs for scrolling to fields
+  const titleRef = useRef<HTMLDivElement>(null)
+  const dateRef = useRef<HTMLDivElement>(null)
+  const locationRef = useRef<HTMLDivElement>(null)
+  const priceRef = useRef<HTMLDivElement>(null)
+  const capacityRef = useRef<HTMLDivElement>(null)
+  const hostRef = useRef<HTMLDivElement>(null)
+
+  // Error state for field validation
+  type FieldKey = "title" | "date" | "location" | "price" | "capacity" | "host"
+  const [fieldErrors, setFieldErrors] = useState<Record<FieldKey, boolean>>({
+    title: false,
+    date: false,
+    location: false,
+    price: false,
+    capacity: false,
+    host: false,
+  })
+
+  // Error ring styling (works in light & dark mode)
+  const errorRing = "ring-2 ring-red-500/70 border-red-500/60 shadow-[0_0_0_4px_rgba(239,68,68,0.12)]"
 
   // UI Mode state (dark/light) with localStorage persistence
   // Always start with "dark" to match server render, then sync from localStorage on client
@@ -158,20 +215,20 @@ export function SessionInvite({
   // Pending cover selection in modal (not applied until Confirm is clicked)
   const [pendingCoverUrl, setPendingCoverUrl] = useState<string | null>(null)
 
-  const [eventTitle, setEventTitle] = useState("Saturday Morning Smash")
+  const [eventTitle, setEventTitle] = useState(initialTitle || "")
   const [titleFont, setTitleFont] = useState<keyof typeof TITLE_FONTS>("Classic")
-  const [eventDate, setEventDate] = useState("Sat, Jan 25 • 9:00 AM - 11:00 AM")
+  const [eventDate, setEventDate] = useState(initialDate || "")
   const [selectedDateDraft, setSelectedDateDraft] = useState<Date | null>(null)
   const [selectedTimeDraft, setSelectedTimeDraft] = useState<{ hour: number; minute: number; ampm: "AM" | "PM" }>({ hour: 9, minute: 0, ampm: "AM" })
   const [selectedDurationDraft, setSelectedDurationDraft] = useState<number>(2) // Duration in hours (1, 1.5, 2, 2.5, 3, 3.5, 4)
-  const [eventLocation, setEventLocation] = useState("Victory Sports Complex, Court 3")
+  const [eventLocation, setEventLocation] = useState(initialLocation || "")
   const [eventMapUrl, setEventMapUrl] = useState<string>("")
-  const [locationDraft, setLocationDraft] = useState<string>(eventLocation)
-  const [mapUrlDraft, setMapUrlDraft] = useState<string>(eventMapUrl)
-  const [eventPrice, setEventPrice] = useState(15)
-  const [eventCapacity, setEventCapacity] = useState(8)
-  const [hostName, setHostName] = useState<string | null>(null)
-  const [hostNameInput, setHostNameInput] = useState("")
+  const [locationDraft, setLocationDraft] = useState<string>(initialLocation || "")
+  const [mapUrlDraft, setMapUrlDraft] = useState<string>("")
+  const [eventPrice, setEventPrice] = useState(initialPrice ?? (isEmptySession ? 0 : 15))
+  const [eventCapacity, setEventCapacity] = useState(initialCapacity ?? (isEmptySession ? 0 : 8))
+  const [hostName, setHostName] = useState<string | null>(initialHostName || null)
+  const [hostNameInput, setHostNameInput] = useState(initialHostName || "")
   const [isHostNameEditing, setIsHostNameEditing] = useState(false)
   const [isHostNameSaving, setIsHostNameSaving] = useState(false)
   // Initialize sport from prop or default to "Badminton"
@@ -187,9 +244,7 @@ export function SessionInvite({
   }
   
   const [selectedSport, setSelectedSport] = useState(getSportDisplayName(initialSport))
-  const [eventDescription, setEventDescription] = useState(
-    "Join us for an energetic morning of badminton! All skill levels welcome. We'll have a rotation system so everyone gets to play. Bring your own racket or use one of ours.",
-  )
+  const [eventDescription, setEventDescription] = useState(initialDescription || "")
 
   // Optimistic cover URL state - single source of truth for UI
   // null means use default gradient, string means use image URL
@@ -298,6 +353,54 @@ export function SessionInvite({
   // Handle confirm button click in cover picker modal
   const handleCoverConfirm = () => {
     updateCover(pendingCoverUrl, false)
+  }
+
+  // Handle cover image upload
+  const handleCoverImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // Validate file type
+      if (!file.type.startsWith("image/")) {
+        toast({
+          title: "Invalid file",
+          description: "Please upload an image file.",
+          variant: "default",
+        })
+        return
+      }
+
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: "Please upload an image smaller than 5MB.",
+          variant: "default",
+        })
+        return
+      }
+
+      // Convert to data URL for preview (temporary - should upload to storage in production)
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const result = reader.result as string
+        if (result) {
+          setPendingCoverUrl(result)
+          toast({
+            title: "Image selected",
+            description: "Click Confirm to apply the cover image.",
+            variant: "success",
+          })
+        }
+      }
+      reader.onerror = () => {
+        toast({
+          title: "Upload failed",
+          description: "Failed to read the image file.",
+          variant: "default",
+        })
+      }
+      reader.readAsDataURL(file)
+    }
   }
 
   const [bankName, setBankName] = useState("")
@@ -634,8 +737,39 @@ export function SessionInvite({
     return email.split("@")[0]
   }
 
-  // Computed host name: session hostName ?? user profileName
-  const displayHostName = hostName ?? getUserProfileName() ?? "Host"
+  // Computed host name: session hostName ?? user profileName ?? placeholder
+  const displayHostName = hostName ?? getUserProfileName() ?? "Your name"
+
+  // Validation helper functions
+  const isBlank = (v?: string | null) => !v || v.trim().length === 0
+
+  const isPlaceholder = (v: string, placeholder: string) =>
+    v.trim().toLowerCase() === placeholder.trim().toLowerCase()
+
+  const isTitleValid = () =>
+    !isBlank(eventTitle) && !isPlaceholder(eventTitle, PLACEHOLDERS.title)
+
+  const isDateValid = () =>
+    !isBlank(eventDate) && !isPlaceholder(eventDate, PLACEHOLDERS.date)
+
+  const isLocationValid = () =>
+    !isBlank(eventLocation) && !isPlaceholder(eventLocation, PLACEHOLDERS.location)
+
+  const isPriceValid = () =>
+    typeof eventPrice === "number" && !Number.isNaN(eventPrice) && eventPrice >= 0
+
+  const isCapacityValid = () =>
+    Number.isInteger(eventCapacity) && eventCapacity >= 1
+
+  const isHostValid = () =>
+    !isBlank(displayHostName) && !isPlaceholder(displayHostName, PLACEHOLDERS.host)
+
+  // Scroll to ref helper
+  const scrollToRef = (ref: React.RefObject<HTMLElement | null>) => {
+    const el = ref.current
+    if (!el) return
+    el.scrollIntoView({ behavior: "smooth", block: "center" })
+  }
 
   // Initialize hostName input value
   useEffect(() => {
@@ -643,6 +777,49 @@ export function SessionInvite({
       setHostNameInput(displayHostName)
     }
   }, [displayHostName, isHostNameEditing])
+
+  // Clear errors when fields become valid
+  useEffect(() => {
+    setFieldErrors(prev => ({
+      ...prev,
+      title: prev.title ? !isTitleValid() : false,
+    }))
+  }, [eventTitle])
+
+  useEffect(() => {
+    setFieldErrors(prev => ({
+      ...prev,
+      date: prev.date ? !isDateValid() : false,
+    }))
+  }, [eventDate])
+
+  useEffect(() => {
+    setFieldErrors(prev => ({
+      ...prev,
+      location: prev.location ? !isLocationValid() : false,
+    }))
+  }, [eventLocation])
+
+  useEffect(() => {
+    setFieldErrors(prev => ({
+      ...prev,
+      price: prev.price ? !isPriceValid() : false,
+    }))
+  }, [eventPrice])
+
+  useEffect(() => {
+    setFieldErrors(prev => ({
+      ...prev,
+      capacity: prev.capacity ? !isCapacityValid() : false,
+    }))
+  }, [eventCapacity])
+
+  useEffect(() => {
+    setFieldErrors(prev => ({
+      ...prev,
+      host: prev.host ? !isHostValid() : false,
+    }))
+  }, [displayHostName])
 
   // Update hostName handler
   const handleHostNameSave = async () => {
@@ -654,7 +831,7 @@ export function SessionInvite({
     
     // If empty after trim, use user profile name (don't save to session)
     if (!finalValue) {
-      setHostNameInput(getUserProfileName() ?? "Host")
+      setHostNameInput(getUserProfileName() ?? "Your name")
       // Reset to null so it falls back to user profile name
       if (hostName !== null) {
         await saveHostName(null)
@@ -744,8 +921,67 @@ export function SessionInvite({
     setHostNameInput(displayHostName)
   }
 
+  // Validation function for publish
+  const validateBeforePublish = () => {
+    const missing: FieldKey[] = []
+
+    if (!isTitleValid()) missing.push("title")
+    if (!isDateValid()) missing.push("date")
+    if (!isLocationValid()) missing.push("location")
+    if (!isPriceValid()) missing.push("price")
+    if (!isCapacityValid()) missing.push("capacity")
+    if (!isHostValid()) missing.push("host")
+
+    if (missing.length === 0) {
+      setFieldErrors({ title: false, date: false, location: false, price: false, capacity: false, host: false })
+      return { ok: true as const, missing: [] as FieldKey[] }
+    }
+
+    // Set error flags
+    setFieldErrors(prev => ({
+      ...prev,
+      title: missing.includes("title"),
+      date: missing.includes("date"),
+      location: missing.includes("location"),
+      price: missing.includes("price"),
+      capacity: missing.includes("capacity"),
+      host: missing.includes("host"),
+    }))
+
+    // Toast message
+    const labelMap: Record<FieldKey, string> = {
+      title: "Title",
+      date: "Date",
+      location: "Location",
+      price: "Cost",
+      capacity: "Spots",
+      host: "Host name",
+    }
+
+    toast({
+      title: "Missing required fields",
+      description: `Please complete: ${missing.map(m => labelMap[m]).join(", ")}`,
+      variant: "destructive",
+    })
+
+    // Scroll to first missing field
+    const first = missing[0]
+    if (first === "title") scrollToRef(titleRef)
+    if (first === "date") scrollToRef(dateRef)
+    if (first === "location") scrollToRef(locationRef)
+    if (first === "price") scrollToRef(priceRef)
+    if (first === "capacity") scrollToRef(capacityRef)
+    if (first === "host") scrollToRef(hostRef)
+
+    return { ok: false as const, missing }
+  }
+
   // Handle publish with auth gating
   const handlePublish = async () => {
+    // Validate required fields first
+    const validation = validateBeforePublish()
+    if (!validation.ok) return
+
     if (!isAuthenticated) {
       // Store intent to publish after login
       if (typeof window !== "undefined") {
@@ -807,7 +1043,7 @@ export function SessionInvite({
   const strongText = uiMode === "dark" ? "text-white/90" : "text-black/90"
   const inputBg = uiMode === "dark" ? "bg-white/5" : "bg-black/5"
   const inputBorder = uiMode === "dark" ? "border-white/10" : "border-black/10"
-  const inputPlaceholder = uiMode === "dark" ? "placeholder:text-white/30" : "placeholder:text-black/40"
+  const inputPlaceholder = uiMode === "dark" ? "placeholder:text-white/40" : "placeholder:text-black/40"
 
   return (
     <div
@@ -820,8 +1056,8 @@ export function SessionInvite({
       data-effect-glow={effects.glow}
       data-effect-vignette={effects.vignette}
     >
-      {/* Top Navigation - only show in edit mode */}
-      {isEditMode && <TopNav showCreateNow={false} />}
+      {/* Top Navigation - show in edit mode or demo mode */}
+      {(isEditMode || demoMode) && <TopNav showCreateNow={false} />}
 
       {effects.grain && (
         <div className="fixed inset-0 pointer-events-none z-[100] opacity-[0.015] mix-blend-overlay">
@@ -853,13 +1089,21 @@ export function SessionInvite({
             transition={{ duration: 0.18, ease: "easeOut" }}
             className="sticky top-14 z-40 bg-lime-500/90 text-black px-4 py-2 flex items-center justify-between"
           >
-            <span className="font-medium text-xs">Previewing as participant</span>
+            <span className="font-medium text-xs">
+              {demoMode ? "Build yours now!" : "Previewing as participant"}
+            </span>
             <Button
-              onClick={() => handlePreviewModeChange(false)}
+              onClick={() => {
+                if (demoMode) {
+                  router.push("/host/sessions/new/edit")
+                } else {
+                  handlePreviewModeChange(false)
+                }
+              }}
               size="sm"
               className="bg-black hover:bg-black/80 text-white h-7 text-xs px-3"
             >
-              Back to edit
+              {demoMode ? "Create" : "Back to edit"}
             </Button>
           </motion.div>
         )}
@@ -1018,14 +1262,18 @@ export function SessionInvite({
                       className="space-y-4"
                     >
                     {isEditMode && !isPreviewMode ? (
-                      <div className="space-y-3">
-                        <div className={`${uiMode === "dark" ? "bg-white/5 border-white/10" : "bg-white/70 border-black/10"} backdrop-blur-sm rounded-2xl p-4`}>
+                      <div ref={titleRef} className="space-y-3">
+                        <div className={cn(
+                          `${uiMode === "dark" ? "bg-white/5 border-white/10" : "bg-white/70 border-black/10"} backdrop-blur-sm rounded-2xl p-4`,
+                          fieldErrors.title && errorRing
+                        )}>
                           <input
                             type="text"
                             value={eventTitle}
                             onChange={(e) => setEventTitle(e.target.value)}
-                          className={`bg-transparent border-none text-4xl font-bold ${uiMode === "dark" ? "text-white" : "text-black"} w-full focus:outline-none focus:ring-0 p-0 text-center ${TITLE_FONTS[titleFont]}`}
-                            placeholder="Event title"
+                            onFocus={() => setFieldErrors(prev => ({ ...prev, title: false }))}
+                          className={`bg-transparent border-none text-4xl font-bold ${uiMode === "dark" ? "text-white" : "text-black"} w-full focus:outline-none focus:ring-0 p-0 text-center ${TITLE_FONTS[titleFont]} ${inputPlaceholder}`}
+                            placeholder="Enter title here"
                           />
                         </div>
                         {/* Font picker */}
@@ -1053,9 +1301,9 @@ export function SessionInvite({
                       <motion.h1
                         layout
                         transition={{ duration: 0.22, ease: "easeOut" }}
-                        className={`text-4xl font-bold ${uiMode === "dark" ? "text-black" : "text-white"} ${isPreviewMode ? "text-left" : "text-center"} ${TITLE_FONTS[titleFont]}`}
+                        className={`text-4xl font-bold ${uiMode === "dark" ? "text-black" : "text-white"} ${isPreviewMode ? "text-left" : "text-center"} ${TITLE_FONTS[titleFont]} ${!eventTitle ? "italic opacity-60" : ""}`}
                       >
-                        {eventTitle}
+                        {eventTitle || "Enter title here"}
                       </motion.h1>
                     )}
 
@@ -1063,42 +1311,62 @@ export function SessionInvite({
                       <>
                         <div className="space-y-3">
                           {/* Date & Time Button */}
-                          <motion.button
-                            onClick={() => setIsDateModalOpen(true)}
-                            whileHover={{ scale: 1.01 }}
-                            whileTap={{ scale: 0.99 }}
-                            transition={{ duration: 0.15 }}
-                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]`}
-                          >
-                            <Calendar className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
-                            <div className="flex-1">
-                              <p className={`text-xs ${mutedText} uppercase tracking-wide mb-0.5`}>Date & Time</p>
-                              <p className={`${strongText} font-medium`}>{eventDate}</p>
-                            </div>
-                            <ChevronRight className={`w-5 h-5 ${uiMode === "dark" ? "text-white/40" : "text-black/40"} flex-shrink-0`} />
-                          </motion.button>
+                          <div ref={dateRef}>
+                            <motion.button
+                              onClick={() => {
+                                setFieldErrors(prev => ({ ...prev, date: false }))
+                                setIsDateModalOpen(true)
+                              }}
+                              whileHover={{ scale: 1.01 }}
+                              whileTap={{ scale: 0.99 }}
+                              transition={{ duration: 0.15 }}
+                              className={cn(
+                                `w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]`,
+                                fieldErrors.date && errorRing
+                              )}
+                            >
+                              <Calendar className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
+                              <div className="flex-1">
+                                <p className={`text-xs ${mutedText} uppercase tracking-wide mb-0.5`}>Date & Time</p>
+                                <p className={`${eventDate ? strongText : mutedText} ${!eventDate ? "italic" : ""} font-medium`}>{eventDate || "Choose date"}</p>
+                              </div>
+                              <ChevronRight className={`w-5 h-5 ${uiMode === "dark" ? "text-white/40" : "text-black/40"} flex-shrink-0`} />
+                            </motion.button>
+                          </div>
 
                           {/* Location Button */}
-                          <motion.button
-                            onClick={() => setIsLocationModalOpen(true)}
-                            whileHover={{ scale: 1.01 }}
-                            whileTap={{ scale: 0.99 }}
-                            transition={{ duration: 0.15 }}
-                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]`}
-                          >
+                          <div ref={locationRef}>
+                            <motion.button
+                              onClick={() => {
+                                setFieldErrors(prev => ({ ...prev, location: false }))
+                                setIsLocationModalOpen(true)
+                              }}
+                              whileHover={{ scale: 1.01 }}
+                              whileTap={{ scale: 0.99 }}
+                              transition={{ duration: 0.15 }}
+                              className={cn(
+                                `w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]`,
+                                fieldErrors.location && errorRing
+                              )}
+                            >
                             <MapPin className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
                               <p className={`text-xs ${mutedText} uppercase tracking-wide mb-0.5`}>Location</p>
-                              <p className={`${strongText} font-medium`}>{eventLocation}</p>
+                              <p className={`${eventLocation ? strongText : mutedText} ${!eventLocation ? "italic" : ""} font-medium`}>{eventLocation || "Enter location"}</p>
                             </div>
                             <ChevronRight className={`w-5 h-5 ${uiMode === "dark" ? "text-white/40" : "text-black/40"} flex-shrink-0`} />
-                          </motion.button>
+                            </motion.button>
+                          </div>
 
                           <motion.div
+                            ref={priceRef}
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             transition={{ duration: 0.15 }}
-                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 min-h-[54px]`}
+                            className={cn(
+                              `w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 min-h-[54px]`,
+                              fieldErrors.price && errorRing
+                            )}
                           >
                             <DollarSign className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
@@ -1107,12 +1375,14 @@ export function SessionInvite({
                                 <span className={`${strongText} font-medium`}>$</span>
                                 <input
                                   type="number"
-                                  value={eventPrice}
-                                  onChange={(e) => setEventPrice(Number(e.target.value))}
+                                  value={eventPrice || ""}
+                                  onChange={(e) => setEventPrice(Number(e.target.value) || 0)}
                                   onBlur={handleCostBlur}
+                                  onFocus={() => setFieldErrors(prev => ({ ...prev, price: false }))}
                                   min={0}
                                   step={1}
-                                  className={`bg-transparent border-none ${strongText} font-medium w-16 focus:outline-none focus:ring-0 p-0`}
+                                  placeholder="Cost"
+                                  className={`bg-transparent border-none ${strongText} font-medium italic w-16 focus:outline-none focus:ring-0 p-0 ${inputPlaceholder}`}
                                 />
                                 <span className={`${strongText} font-medium`}>per person</span>
                               </div>
@@ -1120,10 +1390,14 @@ export function SessionInvite({
                           </motion.div>
 
                           <motion.div
+                            ref={capacityRef}
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             transition={{ duration: 0.15 }}
-                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 min-h-[54px]`}
+                            className={cn(
+                              `w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 min-h-[54px]`,
+                              fieldErrors.capacity && errorRing
+                            )}
                           >
                             <Users className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
@@ -1131,12 +1405,14 @@ export function SessionInvite({
                               <div className="flex items-center gap-1.5">
                                 <input
                                   type="number"
-                                  value={eventCapacity}
-                                  onChange={(e) => setEventCapacity(Number(e.target.value))}
+                                  value={eventCapacity || ""}
+                                  onChange={(e) => setEventCapacity(Number(e.target.value) || 0)}
                                   onBlur={handleSpotsBlur}
+                                  onFocus={() => setFieldErrors(prev => ({ ...prev, capacity: false }))}
                                   min={1}
                                   step={1}
-                                  className={`bg-transparent border-none ${strongText} font-medium w-16 focus:outline-none focus:ring-0 p-0`}
+                                  placeholder="Number"
+                                  className={`bg-transparent border-none ${strongText} font-medium w-16 focus:outline-none focus:ring-0 p-0 ${inputPlaceholder} [&::placeholder]:italic`}
                                 />
                                 <span className={`${strongText} font-medium`}>spots available</span>
                               </div>
@@ -1149,28 +1425,42 @@ export function SessionInvite({
                       <div className="space-y-4">
                         <div className="flex items-start gap-3">
                           <Calendar className={`w-5 h-5 ${uiMode === "dark" ? "text-black/60" : "text-white/60"} mt-0.5`} />
-                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"}`}>{eventDate}</p>
+                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"} ${!eventDate ? "italic opacity-60" : ""}`}>
+                            {eventDate || "Choose date"}
+                          </p>
                         </div>
                         <div className="flex items-start gap-3">
                           <MapPin className={`w-5 h-5 ${uiMode === "dark" ? "text-black/60" : "text-white/60"} mt-0.5`} />
-                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"}`}>{eventLocation}</p>
+                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"} ${!eventLocation ? "italic opacity-60" : ""}`}>
+                            {eventLocation || "Enter location"}
+                          </p>
                         </div>
                         <div className="flex items-start gap-3">
                           <DollarSign className={`w-5 h-5 ${uiMode === "dark" ? "text-black/60" : "text-white/60"} mt-0.5`} />
-                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"}`}>${eventPrice} per person</p>
+                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"} ${!eventPrice || eventPrice === 0 ? "italic opacity-60" : ""}`}>
+                            {eventPrice && eventPrice > 0 
+                              ? `$${eventPrice} ${demoMode ? "per chick" : "per person"}` 
+                              : "Enter cost"}
+                          </p>
                         </div>
                         <div className="flex items-start gap-3">
                           <Users className={`w-5 h-5 ${uiMode === "dark" ? "text-black/60" : "text-white/60"} mt-0.5`} />
-                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"}`}>{eventCapacity} spots total</p>
+                          <p className={`text-base ${uiMode === "dark" ? "text-black" : "text-white"} ${!eventCapacity || eventCapacity === 0 ? "italic opacity-60" : ""}`}>
+                            {eventCapacity && eventCapacity > 0 ? `${eventCapacity} spots total` : "Enter number of spots"}
+                          </p>
                         </div>
                       </div>
                     )}
                     </motion.div>
 
                     <motion.div
+                      ref={hostRef}
                       layout
                       transition={{ duration: 0.22, ease: "easeOut" }}
-                      className="flex items-center gap-3 pt-2"
+                      className={cn(
+                        "flex items-center gap-3 pt-2",
+                        fieldErrors.host && "ring-2 ring-red-500/70 rounded-lg p-2 -m-2"
+                      )}
                     >
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)]" />
                     <div>
@@ -1185,16 +1475,24 @@ export function SessionInvite({
                                 setHostNameInput(value)
                               }
                             }}
-                            onFocus={handleHostNameFocus}
+                            onFocus={() => {
+                              handleHostNameFocus()
+                              setFieldErrors(prev => ({ ...prev, host: false }))
+                            }}
                             onBlur={handleHostNameSave}
                             onKeyDown={handleHostNameKeyDown}
                             disabled={isHostNameSaving}
                             maxLength={40}
-                            className="bg-transparent border-none border-b border-transparent text-white font-medium focus:outline-none focus:ring-0 focus:border-b focus:border-white/30 p-0 transition-colors disabled:opacity-50 min-w-[80px]"
-                            placeholder={getUserProfileName() ?? "Host"}
+                            className={cn(
+                              "bg-transparent border-none border-b border-transparent text-white font-medium focus:outline-none focus:ring-0 focus:border-b p-0 transition-colors disabled:opacity-50 min-w-[80px] placeholder:italic",
+                              fieldErrors.host ? "border-red-500/70 focus:border-red-500/70" : "focus:border-white/30"
+                            )}
+                            placeholder={getUserProfileName() ?? "Your name"}
                         />
                       ) : (
-                          <p className={`font-medium ${uiMode === "dark" ? "text-black" : "text-white"}`}>{displayHostName}</p>
+                          <p className={`font-medium ${uiMode === "dark" ? "text-black" : "text-white"} ${!displayHostName || displayHostName === "Your name" ? "italic opacity-60" : ""}`}>
+                            {displayHostName || "Your name"}
+                          </p>
                       )}
                     </div>
                     </motion.div>
@@ -1244,11 +1542,14 @@ export function SessionInvite({
                   ref={textareaRef}
                   value={eventDescription}
                   onChange={(e) => setEventDescription(e.target.value)}
+                  placeholder="Add a short description for participants"
                   className={`${inputBg} ${inputBorder} ${inputPlaceholder} rounded-lg p-3 ${strongText} text-sm leading-relaxed w-full focus:outline-none focus:ring-2 focus:ring-[var(--theme-accent)]/50 resize-none overflow-hidden`}
                   rows={1}
                 />
               ) : (
-                <p className={`${mutedText} text-sm leading-relaxed`}>{eventDescription}</p>
+                <p className={`${mutedText} ${!eventDescription ? "italic opacity-60" : ""} text-sm leading-relaxed`}>
+                  {eventDescription || "Add a short description for participants"}
+                </p>
               )}
             </Card>
           </motion.div>
@@ -1262,22 +1563,31 @@ export function SessionInvite({
               <Card className={`${glassCard} p-6`}>
                 <h2 className={`text-lg font-semibold ${strongText} mb-3`}>Location</h2>
                 <p className={`${mutedText} text-sm mb-4`}>{eventLocation}</p>
-                <div className="w-full h-48 rounded-lg overflow-hidden bg-slate-800">
-                  <iframe
-                    width="100%"
-                    height="100%"
-                    frameBorder="0"
-                    src={getMapEmbedSrc(eventMapUrl, eventLocation)}
-                    style={{ border: 0 }}
-                    allowFullScreen
-                    loading="lazy"
-                  />
-                  {!eventMapUrl && (
-                    <p className={`text-xs ${mutedText} mt-2`}>
-                      Map is approximate in beta. Paste a Google Maps link for a precise embed.
-                    </p>
-                  )}
-                </div>
+                {demoMode ? (
+                  <div className="w-full h-48 rounded-lg overflow-hidden bg-gradient-to-br from-lime-100 to-emerald-100 flex items-center justify-center">
+                    <div className="text-center">
+                      <MapPin className="w-12 h-12 mx-auto mb-2 text-lime-600" />
+                      <p className="text-sm text-black font-medium">Map preview (demo)</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-full h-48 rounded-lg overflow-hidden bg-slate-800">
+                    <iframe
+                      width="100%"
+                      height="100%"
+                      frameBorder="0"
+                      src={getMapEmbedSrc(eventMapUrl, eventLocation)}
+                      style={{ border: 0 }}
+                      allowFullScreen
+                      loading="lazy"
+                    />
+                    {!eventMapUrl && (
+                      <p className={`text-xs ${mutedText} mt-2`}>
+                        Map is approximate in beta. Paste a Google Maps link for a precise embed.
+                      </p>
+                    )}
+                  </div>
+                )}
               </Card>
             </motion.div>
           )}
@@ -1292,11 +1602,14 @@ export function SessionInvite({
                 <div className="flex items-center justify-between mb-4">
                   <h2 className={`text-lg font-semibold ${strongText}`}>Going</h2>
                   <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30">
-                    5 / {eventCapacity}
+                    {(demoMode && demoParticipants.length > 0 ? demoParticipants.length : 5)} / {eventCapacity}
                   </Badge>
                 </div>
                 <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2">
-                  {[1, 2, 3, 4, 5].map((i) => (
+                  {(demoMode && demoParticipants.length > 0
+                    ? demoParticipants
+                    : [1, 2, 3, 4, 5].map((i) => ({ name: `User ${i}`, avatar: null }))
+                  ).map((participant, i) => (
                     <motion.div
                       key={i}
                       whileHover={{ scale: 1.05, y: -2 }}
@@ -1304,11 +1617,25 @@ export function SessionInvite({
                       className="flex flex-col items-center gap-2 min-w-[80px]"
                     >
                       <div className="relative">
-                        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] p-0.5">
-                          <div className="w-full h-full rounded-full bg-slate-900" />
-                        </div>
+                        {participant.avatar ? (
+                          <img
+                            src={participant.avatar}
+                            alt={participant.name}
+                            className="w-16 h-16 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] p-0.5">
+                            <div className={`w-full h-full rounded-full ${uiMode === "dark" ? "bg-slate-100" : "bg-white"} flex items-center justify-center`}>
+                              <img
+                                src="/profile.svg"
+                                alt={participant.name}
+                                className="w-10 h-10 object-contain"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <span className={`text-xs ${mutedText} text-center`}>User {i}</span>
+                      <span className={`text-xs ${mutedText} text-center`}>{participant.name}</span>
                     </motion.div>
                   ))}
                 </div>
@@ -1363,12 +1690,12 @@ export function SessionInvite({
                 {/* Bank Details */}
                 <div className="space-y-3">
                   <div>
-                    <label className="text-sm mb-1.5 block">Bank Name</label>
+                    <label className={`text-sm ${mutedText} mb-1.5 block`}>Bank Name</label>
                     <Input
                       value={bankName}
                       onChange={(e) => setBankName(e.target.value)}
                       placeholder="e.g. Maybank"
-                      className="bg-white/5 border-white/10 text-black placeholder:text-/30 focus:ring-[var(--theme-accent)]/50"
+                      className={`${inputBg} ${inputBorder} ${strongText} ${inputPlaceholder} focus:ring-[var(--theme-accent)]/50`}
                     />
                   </div>
                   <div>
@@ -1584,51 +1911,97 @@ export function SessionInvite({
       </Dialog>
 
       <Dialog open={isLocationModalOpen} onOpenChange={setIsLocationModalOpen}>
-        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent 
+          className={cn(
+            "max-w-md max-h-[90vh] overflow-y-auto rounded-2xl",
+            uiMode === "dark"
+              ? "bg-slate-900 text-white border border-white/10"
+              : "bg-white text-black border border-black/10"
+          )}
+        >
           <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Set location</DialogTitle>
+            <DialogTitle className={cn(
+              "text-xl font-semibold",
+              uiMode === "dark" ? "text-white" : "text-black"
+            )}>
+              Set location
+            </DialogTitle>
           </DialogHeader>
           <div className="mt-4 space-y-4">
             {/* Location Name Input */}
             <div>
-              <label className={`text-sm ${mutedText} mb-2 block`}>Location name</label>
+              <label className={cn(
+                "text-sm mb-2 block",
+                uiMode === "dark" ? "text-white/70" : "text-black/60"
+              )}>
+                Location name
+              </label>
               <Input
                 value={locationDraft}
                 onChange={(e) => setLocationDraft(e.target.value)}
                 placeholder="e.g. Bukit Jalil Sports Arena, Court 2"
-                className={`${inputBg} ${inputBorder} ${strongText} ${inputPlaceholder} focus:ring-[var(--theme-accent)]/50`}
+                className={cn(
+                  "h-12 rounded-xl focus-visible:ring-2 focus-visible:ring-lime-500/40",
+                  uiMode === "dark"
+                    ? "bg-white/5 border-white/10 text-white placeholder:text-white/40"
+                    : "bg-black/5 border-black/10 text-black placeholder:text-black/40"
+                )}
               />
             </div>
 
             {/* Google Maps Link Input */}
             <div>
-              <label className={`text-sm ${mutedText} mb-2 block`}>Google Maps link (optional)</label>
+              <label className={cn(
+                "text-sm mb-2 block",
+                uiMode === "dark" ? "text-white/70" : "text-black/60"
+              )}>
+                Google Maps link (optional)
+              </label>
               <Input
                 type="url"
                 value={mapUrlDraft}
                 onChange={(e) => setMapUrlDraft(e.target.value)}
                 placeholder="Paste Google Maps link (optional)"
-                className={`${inputBg} ${inputBorder} ${strongText} ${inputPlaceholder} focus:ring-[var(--theme-accent)]/50`}
+                className={cn(
+                  "h-12 rounded-xl focus-visible:ring-2 focus-visible:ring-lime-500/40",
+                  uiMode === "dark"
+                    ? "bg-white/5 border-white/10 text-white placeholder:text-white/40"
+                    : "bg-black/5 border-black/10 text-black placeholder:text-black/40"
+                )}
               />
-                  </div>
+            </div>
 
             {/* Helper Text */}
             <div className="space-y-2 pt-2">
-              <p className="text-xs text-white/60">
+              <p className={cn(
+                "text-xs",
+                uiMode === "dark" ? "text-white/60" : "text-black/60"
+              )}>
                 Beta: Autocomplete isn't enabled yet to keep costs low. Please type your location manually.
               </p>
-              <p className="text-xs text-white/60">
+              <p className={cn(
+                "text-xs",
+                uiMode === "dark" ? "text-white/60" : "text-black/60"
+              )}>
                 Tip: Paste a Google Maps link to enable the map preview.
               </p>
             </div>
           </div>
 
           {/* Action Buttons */}
-          <div className="flex gap-3 mt-6 pt-4 border-t border-white/10">
+          <div className={cn(
+            "mt-6 pt-4 flex gap-3",
+            uiMode === "dark" ? "border-t border-white/10" : "border-t border-black/10"
+          )}>
             <Button
               variant="outline"
               onClick={() => setIsLocationModalOpen(false)}
-              className="flex-1 border-white/20 bg-white/5 hover:bg-white/10 text-white"
+              className={cn(
+                "flex-1 rounded-full",
+                uiMode === "dark"
+                  ? "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                  : "bg-black/5 text-black border-black/10 hover:bg-black/10"
+              )}
             >
               Cancel
             </Button>
@@ -1655,7 +2028,50 @@ export function SessionInvite({
           {/* Scrollable options */}
           <div className="px-6 pb-28 overflow-y-auto max-h-[70vh]">
             <div className="mt-4 flex flex-col gap-4">
-              {/* Default color option (first) */}
+              {/* Upload cover image option (first) */}
+              <label className={`relative w-full aspect-video rounded-xl overflow-hidden border-2 transition-all cursor-pointer ${
+                pendingCoverUrl && typeof pendingCoverUrl === "string" && pendingCoverUrl.startsWith("data:image/")
+                  ? "border-[var(--theme-accent)] ring-2 ring-[var(--theme-accent)]/50"
+                  : "border-white/10 hover:border-white/30"
+              }`}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCoverImageUpload}
+                  className="hidden"
+                />
+                {pendingCoverUrl && typeof pendingCoverUrl === "string" && pendingCoverUrl.startsWith("data:image/") ? (
+                  <>
+                    <img
+                      src={pendingCoverUrl}
+                      alt="Uploaded cover"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/60 to-transparent p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-white font-medium text-sm">Uploaded image</span>
+                        <div className="flex items-center gap-2">
+                          <Check className="w-5 h-5 text-[var(--theme-accent-light)]" />
+                          <span className="text-xs text-[var(--theme-accent-light)] font-medium">Selected</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="absolute inset-0 bg-[var(--theme-accent)]/10 flex items-center justify-center pointer-events-none">
+                      <div className="absolute top-3 right-3 bg-[var(--theme-accent)] rounded-full p-1.5">
+                        <Check className="w-4 h-4 text-black" />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900">
+                    <Upload className="w-12 h-12 text-white/60 mb-3" />
+                    <span className="text-white font-medium text-sm">Upload cover image</span>
+                    <span className="text-white/50 text-xs mt-1">JPG, PNG (max 5MB)</span>
+                  </div>
+                )}
+              </label>
+
+              {/* Default color option */}
               <motion.button
                 onClick={() => setPendingCoverUrl(null)}
                 whileHover={{ scale: 1.02 }}

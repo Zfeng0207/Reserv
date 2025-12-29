@@ -47,6 +47,13 @@ async function HostSessionEditContent({
         initialSport={session.sport || null}
         initialEditMode={true}
         initialPreviewMode={isPreviewMode}
+        initialTitle={session.title || null}
+        initialDate={null} // TODO: Format from session.start_at if needed
+        initialLocation={session.location || null}
+        initialPrice={session.price || null}
+        initialCapacity={session.capacity || null}
+        initialHostName={session.host_name || null}
+        initialDescription={session.description || null}
       />
     </main>
   )

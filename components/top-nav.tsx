@@ -2,8 +2,9 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { UserCircle, LogOut } from "lucide-react"
+import { motion } from "framer-motion"
 import { useAuth } from "@/lib/hooks/use-auth"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { LoginDialog } from "@/components/login-dialog"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { StardustButton } from "@/components/ui/stardust-button"
 
 interface TopNavProps {
   showCreateNow?: boolean
@@ -25,6 +27,7 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
   const { authUser, logOut } = useAuth()
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
   const pathname = usePathname()
+  const router = useRouter()
 
   const handleSignOut = async () => {
     await logOut()
@@ -53,12 +56,19 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
           </Link>
           <div className="flex items-center gap-2">
             {showCreateNow && (
-              <Link
-                href="/host/sessions/new/edit"
-                className="text-gray-700 dark:text-white/70 hover:text-gray-900 dark:hover:text-white text-sm font-medium transition-colors"
+              <motion.div
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.25 }}
+                className="w-auto"
               >
-                Create Now
-              </Link>
+                <StardustButton
+                  onClick={() => router.push("/host/sessions/new/edit")}
+                  className="!w-auto min-w-[10px] px-1 py-1.5 text-sm"
+                >
+                  Create now
+                </StardustButton>
+              </motion.div>
             )}
             {authUser ? (
               <>

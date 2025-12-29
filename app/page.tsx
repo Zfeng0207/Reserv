@@ -50,7 +50,7 @@ export default function HomePage() {
                 asChild
                 className="bg-transparent border-white/20 text-white hover:bg-white/10 rounded-full h-14 px-8 text-lg"
               >
-                <Link href="/s/demo">View demo invite</Link>
+                <Link href="/demo/invite">View demo invite</Link>
               </Button>
             </div>
           </motion.div>

@@ -63,10 +63,10 @@ export function EditorBottomBar({
     if (onSaveDraft) {
       onSaveDraft()
     } else {
-      toast({
-        description: "Draft saved",
+    toast({
+      description: "Draft saved",
         variant: "success",
-      })
+    })
     }
   }
 
@@ -137,12 +137,12 @@ export function EditorBottomBar({
                 </Button>
               )}
               {!onPublish && !onSaveDraft && (
-                <Button
+            <Button
                   onClick={handleSaveDraftClick}
-                  className="w-full bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
-                >
-                  Save draft
-                </Button>
+              className="w-full bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
+            >
+              Save draft
+            </Button>
               )}
             </div>
           </div>

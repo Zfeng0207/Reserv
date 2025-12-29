@@ -32,6 +32,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { EditorBottomBar } from "./editor-bottom-bar"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { MobileCalendar } from "@/components/ui/mobile-calendar"
+import { TimePickerWheels } from "@/components/ui/time-picker-wheels"
 
 // Default cover background colors by sport (when no cover image is set)
 const DEFAULT_COVER_BG: Record<string, string> = {
@@ -159,7 +161,13 @@ export function SessionInvite({
   const [eventTitle, setEventTitle] = useState("Saturday Morning Smash")
   const [titleFont, setTitleFont] = useState<keyof typeof TITLE_FONTS>("Classic")
   const [eventDate, setEventDate] = useState("Sat, Jan 25 • 9:00 AM - 11:00 AM")
+  const [selectedDateDraft, setSelectedDateDraft] = useState<Date | null>(null)
+  const [selectedTimeDraft, setSelectedTimeDraft] = useState<{ hour: number; minute: number; ampm: "AM" | "PM" }>({ hour: 9, minute: 0, ampm: "AM" })
+  const [selectedDurationDraft, setSelectedDurationDraft] = useState<number>(2) // Duration in hours (1, 1.5, 2, 2.5, 3, 3.5, 4)
   const [eventLocation, setEventLocation] = useState("Victory Sports Complex, Court 3")
+  const [eventMapUrl, setEventMapUrl] = useState<string>("")
+  const [locationDraft, setLocationDraft] = useState<string>(eventLocation)
+  const [mapUrlDraft, setMapUrlDraft] = useState<string>(eventMapUrl)
   const [eventPrice, setEventPrice] = useState(15)
   const [eventCapacity, setEventCapacity] = useState(8)
   const [hostName, setHostName] = useState<string | null>(null)
@@ -351,22 +359,163 @@ export function SessionInvite({
     }
   }, [eventDescription, isEditMode, isPreviewMode])
 
-  const suggestedDates = [
-    "Sat, Jan 25 • 9:00 AM - 11:00 AM",
-    "Sat, Jan 25 • 2:00 PM - 4:00 PM",
-    "Sun, Jan 26 • 9:00 AM - 11:00 AM",
-    "Sun, Jan 26 • 3:00 PM - 5:00 PM",
-  ]
+  // Parse eventDate string to extract date and time
+  const parseEventDate = (dateString: string): { date: Date; hour: number; minute: number; ampm: "AM" | "PM"; durationHours: number } | null => {
+    try {
+      // Format: "Sat, Jan 25 • 9:00 AM - 11:00 AM"
+      const parts = dateString.split("•")
+      if (parts.length < 2) return null
+      
+      const datePart = parts[0].trim()
+      const timePart = parts[1].trim()
+      
+      // Parse date: "Sat, Jan 25"
+      const dateMatch = datePart.match(/(\w{3}),\s+(\w{3})\s+(\d{1,2})/)
+      if (!dateMatch) return null
+      
+      const monthName = dateMatch[2]
+      const day = parseInt(dateMatch[3], 10)
+      const monthMap: Record<string, number> = {
+        Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+        Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11
+      }
+      const month = monthMap[monthName]
+      if (month === undefined) return null
+      
+      const currentYear = new Date().getFullYear()
+      const date = new Date(currentYear, month, day)
+      
+      // Parse time: "9:00 AM - 11:00 AM" (take first part)
+      const timeMatch = timePart.match(/(\d{1,2}):(\d{2})\s+(AM|PM)\s*-\s*(\d{1,2}):(\d{2})\s+(AM|PM)/)
+      if (!timeMatch) {
+        // Try single time format
+        const singleTimeMatch = timePart.match(/(\d{1,2}):(\d{2})\s+(AM|PM)/)
+        if (singleTimeMatch) {
+          let hour = parseInt(singleTimeMatch[1], 10)
+          const minute = parseInt(singleTimeMatch[2], 10)
+          const meridiem = singleTimeMatch[3] as "AM" | "PM"
+          if (hour > 12) hour = 12
+          if (hour === 0) hour = 12
+          return { date, hour, minute, ampm: meridiem, durationHours: 2 } // Default 2 hours
+        }
+        return { date, hour: 9, minute: 0, ampm: "AM" as const, durationHours: 2 }
+      }
+      
+      let hour = parseInt(timeMatch[1], 10)
+      const minute = parseInt(timeMatch[2], 10)
+      const meridiem = timeMatch[3] as "AM" | "PM"
+      let endHour = parseInt(timeMatch[4], 10)
+      const endMinute = parseInt(timeMatch[5], 10)
+      const endMeridiem = timeMatch[6] as "AM" | "PM"
+      
+      // Convert to 24h for duration calculation
+      let startHour24 = hour
+      if (meridiem === "AM" && hour === 12) startHour24 = 0
+      else if (meridiem === "PM" && hour !== 12) startHour24 = hour + 12
+      
+      let endHour24 = endHour
+      if (endMeridiem === "AM" && endHour === 12) endHour24 = 0
+      else if (endMeridiem === "PM" && endHour !== 12) endHour24 = endHour + 12
+      
+      const startMinutes = startHour24 * 60 + minute
+      const endMinutes = endHour24 * 60 + endMinute
+      let durationHours = (endMinutes - startMinutes) / 60
+      if (durationHours < 0) durationHours += 24 // Handle day wrap
+      
+      if (hour > 12) hour = 12
+      if (hour === 0) hour = 12
+      
+      return { date, hour, minute, ampm: meridiem, durationHours }
+    } catch {
+      return null
+    }
+  }
 
-  const suggestedLocations = [
-    "Victory Sports Complex, Court 3",
-    "Setapak Sports Complex, Hall A",
-    "KL Badminton Centre, Court 5",
-    "Bukit Jalil Sports Arena",
-  ]
+  // Format Date + time to eventDate string
+  const formatEventDate = (date: Date, hour: number, minute: number, ampm: "AM" | "PM", durationHours: number = 2): string => {
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    
+    const dayName = dayNames[date.getDay()]
+    const monthName = monthNames[date.getMonth()]
+    const day = date.getDate()
+    
+    // Format start time
+    const startTime = `${hour}:${String(minute).padStart(2, "0")} ${ampm}`
+    
+    // Calculate end time (start + durationHours)
+    let startHour24 = hour
+    if (ampm === "AM" && hour === 12) startHour24 = 0
+    else if (ampm === "PM" && hour !== 12) startHour24 = hour + 12
+    
+    let totalMinutes = startHour24 * 60 + minute + (durationHours * 60)
+    if (totalMinutes >= 1440) totalMinutes -= 1440 // Wrap to next day
+    
+    const endHour24 = Math.floor(totalMinutes / 60) % 24
+    const endMinute = totalMinutes % 60
+    
+    // Convert to 12h
+    let endHour = endHour24
+    let endMeridiem: "AM" | "PM" = "AM"
+    if (endHour24 === 0) {
+      endHour = 12
+      endMeridiem = "AM"
+    } else if (endHour24 === 12) {
+      endHour = 12
+      endMeridiem = "PM"
+    } else if (endHour24 < 12) {
+      endHour = endHour24
+      endMeridiem = "AM"
+    } else {
+      endHour = endHour24 - 12
+      endMeridiem = "PM"
+    }
+    
+    const endTime = `${endHour}:${String(endMinute).padStart(2, "0")} ${endMeridiem}`
+    
+    return `${dayName}, ${monthName} ${day} • ${startTime} - ${endTime}`
+  }
 
-  const handleDateSave = (date: string) => {
-    setEventDate(date)
+  // Initialize drafts when date modal opens
+  useEffect(() => {
+    if (isDateModalOpen) {
+      const parsed = parseEventDate(eventDate)
+      const now = new Date()
+      
+      if (parsed) {
+        setSelectedDateDraft(parsed.date)
+        setSelectedTimeDraft({ hour: parsed.hour, minute: parsed.minute, ampm: parsed.ampm })
+        setSelectedDurationDraft(parsed.durationHours)
+        setSelectedDurationDraft(parsed.durationHours)
+      } else {
+        // Default to current date and time rounded to nearest 5 minutes
+        const currentMinute = now.getMinutes()
+        const roundedMinute = Math.round(currentMinute / 5) * 5
+        let currentHour = now.getHours()
+        const currentAmpm: "AM" | "PM" = currentHour >= 12 ? "PM" : "AM"
+        
+        if (currentHour === 0) currentHour = 12
+        else if (currentHour > 12) currentHour = currentHour - 12
+        
+        setSelectedDateDraft(now)
+        setSelectedTimeDraft({ hour: currentHour, minute: roundedMinute >= 60 ? 0 : roundedMinute, ampm: currentAmpm })
+        setSelectedDurationDraft(2) // Default to 2 hours
+      }
+    }
+  }, [isDateModalOpen, eventDate])
+
+  const handleDateSave = () => {
+    if (!selectedDateDraft) return
+
+    const formattedDate = formatEventDate(
+      selectedDateDraft,
+      selectedTimeDraft.hour,
+      selectedTimeDraft.minute,
+      selectedTimeDraft.ampm,
+      selectedDurationDraft
+    )
+    
+    setEventDate(formattedDate)
     setIsDateModalOpen(false)
     toast({
       title: "Date updated",
@@ -375,8 +524,50 @@ export function SessionInvite({
     })
   }
 
-  const handleLocationSave = (location: string) => {
-    setEventLocation(location)
+  // Initialize drafts when modal opens
+  useEffect(() => {
+    if (isLocationModalOpen) {
+      setLocationDraft(eventLocation)
+      setMapUrlDraft(eventMapUrl)
+    }
+  }, [isLocationModalOpen, eventLocation, eventMapUrl])
+
+  // Helper function to convert map URL to embed URL
+  const getMapEmbedSrc = (mapUrl: string, location: string): string => {
+    if (mapUrl && mapUrl.includes("google.com/maps")) {
+      // Try to extract place ID or coordinates from the URL (simple approach)
+      // If we can't parse it properly, fall back to query-based embed
+      try {
+        // Check if it's already an embed URL
+        if (mapUrl.includes("/embed")) {
+          return mapUrl
+        }
+        // For now, use query-based fallback for simplicity
+        return `https://www.google.com/maps?q=${encodeURIComponent(location)}&output=embed`
+      } catch {
+        return `https://www.google.com/maps?q=${encodeURIComponent(location)}&output=embed`
+      }
+    }
+    // Fallback to query-based embed using location text
+    return `https://www.google.com/maps?q=${encodeURIComponent(location)}&output=embed`
+  }
+
+  const handleLocationSave = () => {
+    const trimmedLocation = locationDraft.trim()
+    const trimmedMapUrl = mapUrlDraft.trim()
+    
+    // Don't allow empty location override; fallback to current
+    if (trimmedLocation) {
+      setEventLocation(trimmedLocation)
+    }
+    
+    // Normalize map URL (prepend https:// if needed)
+    let normalizedMapUrl = trimmedMapUrl
+    if (normalizedMapUrl && !normalizedMapUrl.startsWith("http://") && !normalizedMapUrl.startsWith("https://")) {
+      normalizedMapUrl = `https://${normalizedMapUrl}`
+    }
+    setEventMapUrl(normalizedMapUrl)
+    
     setIsLocationModalOpen(false)
     toast({
       title: "Location updated",
@@ -690,9 +881,9 @@ export function SessionInvite({
               if (hasCustomCover) {
                 // User has selected a cover image - show it
                 return (
-                  <div
-                    className="absolute inset-0 bg-cover bg-center"
-                    style={{
+          <div
+            className="absolute inset-0 bg-cover bg-center"
+            style={{
                       backgroundImage: `url("${encodeURI(optimisticCoverUrl!)}")`,
                     }}
                   />
@@ -763,7 +954,7 @@ export function SessionInvite({
                           whileHover={{ scale: 1.02 }}
                           whileTap={{ scale: 0.98 }}
                           transition={{ duration: 0.15 }}
-                          className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border border-[var(--theme-accent)]/30 px-3 py-1.5 rounded-full text-xs font-medium inline-flex items-center gap-1.5 focus:outline-none focus:ring-0"
+                          className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border border-[var(--theme-accent)]/30 px-3 py-1.5 rounded-full text-xs font-medium inline-flex items-center gap-1.5"
                         >
                           {selectedSport}
                           <ChevronDown className="w-3 h-3" />
@@ -808,7 +999,7 @@ export function SessionInvite({
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       transition={{ duration: 0.15 }}
-                      className={`${glassPill} px-3 py-1.5 rounded-full text-xs font-medium inline-flex items-center gap-1.5 focus:outline-none focus:ring-0`}
+                      className={`${glassPill} px-3 py-1.5 rounded-full text-xs font-medium inline-flex items-center gap-1.5`}
                     >
                       <Upload className="w-3 h-3" />
                       Change cover
@@ -834,7 +1025,7 @@ export function SessionInvite({
                             value={eventTitle}
                             onChange={(e) => setEventTitle(e.target.value)}
                           className={`bg-transparent border-none text-4xl font-bold ${uiMode === "dark" ? "text-white" : "text-black"} w-full focus:outline-none focus:ring-0 p-0 text-center ${TITLE_FONTS[titleFont]}`}
-                          placeholder="Event title"
+                            placeholder="Event title"
                           />
                         </div>
                         {/* Font picker */}
@@ -843,7 +1034,7 @@ export function SessionInvite({
                             <button
                               key={font}
                               onClick={() => setTitleFont(font)}
-                              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all focus:outline-none focus:ring-0 ${
+                              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
                                 titleFont === font
                                   ? uiMode === "dark"
                                     ? "bg-white/10 text-[var(--theme-accent-light)] border border-[var(--theme-accent)]/40"
@@ -877,7 +1068,7 @@ export function SessionInvite({
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             transition={{ duration: 0.15 }}
-                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px] focus:outline-none focus:ring-0`}
+                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]`}
                           >
                             <Calendar className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
@@ -893,7 +1084,7 @@ export function SessionInvite({
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             transition={{ duration: 0.15 }}
-                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px] focus:outline-none focus:ring-0`}
+                            className={`w-full ${glassCard} rounded-2xl p-4 flex items-center gap-3 text-left min-h-[54px]`}
                           >
                             <MapPin className="w-5 h-5 text-[var(--theme-accent-light)] flex-shrink-0" />
                             <div className="flex-1">
@@ -1015,7 +1206,7 @@ export function SessionInvite({
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         transition={{ duration: 0.15 }}
-                        className={`${uiMode === "dark" ? "bg-white/10 border-white/20 text-white" : "bg-white/70 border-black/10 text-black"} backdrop-blur-sm px-4 py-3 rounded-full text-sm font-medium flex items-center justify-center gap-2 focus:outline-none focus:ring-0`}
+                        className={`${uiMode === "dark" ? "bg-white/10 border-white/20 text-white" : "bg-white/70 border-black/10 text-black"} backdrop-blur-sm px-4 py-3 rounded-full text-sm font-medium flex items-center justify-center gap-2`}
                       >
                         <Copy className="w-4 h-4" />
                         Copy invite link
@@ -1076,11 +1267,16 @@ export function SessionInvite({
                     width="100%"
                     height="100%"
                     frameBorder="0"
-                    src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3022.2!2d-73.98!3d40.75!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zNDDCsDQ1JzAwLjAiTiA3M8KwNTgnNDguMCJX!5e0!3m2!1sen!2sus!4v1234567890"
+                    src={getMapEmbedSrc(eventMapUrl, eventLocation)}
                     style={{ border: 0 }}
                     allowFullScreen
                     loading="lazy"
                   />
+                  {!eventMapUrl && (
+                    <p className={`text-xs ${mutedText} mt-2`}>
+                      Map is approximate in beta. Paste a Google Maps link for a precise embed.
+                    </p>
+                  )}
                 </div>
               </Card>
             </motion.div>
@@ -1147,11 +1343,19 @@ export function SessionInvite({
                       </button>
                     </div>
                   ) : (
-                    <label className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center hover:border-[var(--theme-accent)]/50 transition-colors cursor-pointer block">
+                    <label className={`border-2 border-dashed rounded-lg p-8 text-center hover:border-[var(--theme-accent)]/50 transition-colors cursor-pointer block ${
+                      uiMode === "dark" ? "border-white/20" : "border-black/30"
+                    }`}>
                       <input type="file" accept="image/*" onChange={handlePaymentImageUpload} className="hidden" />
-                      <ImageIcon className="w-8 h-8 text-white/40 mx-auto mb-2" />
-                      <p className="text-sm text-white/60">Upload Touch 'n Go / Maybank QR</p>
-                      <p className="text-xs text-white/40 mt-1">or bank transfer screenshot</p>
+                      <ImageIcon className={`w-8 h-8 mx-auto mb-2 ${
+                        uiMode === "dark" ? "text-white/40" : "text-black/50"
+                      }`} />
+                      <p className={`text-sm ${
+                        uiMode === "dark" ? "text-white/60" : "text-black/70"
+                      }`}>Upload Touch 'n Go / Maybank QR</p>
+                      <p className={`text-xs mt-1 ${
+                        uiMode === "dark" ? "text-white/40" : "text-black/50"
+                      }`}>or bank transfer screenshot</p>
                     </label>
                   )}
                 </div>
@@ -1159,12 +1363,12 @@ export function SessionInvite({
                 {/* Bank Details */}
                 <div className="space-y-3">
                   <div>
-                    <label className="text-sm text-white/70 mb-1.5 block">Bank Name</label>
+                    <label className="text-sm mb-1.5 block">Bank Name</label>
                     <Input
                       value={bankName}
                       onChange={(e) => setBankName(e.target.value)}
                       placeholder="e.g. Maybank"
-                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:ring-[var(--theme-accent)]/50"
+                      className="bg-white/5 border-white/10 text-black placeholder:text-/30 focus:ring-[var(--theme-accent)]/50"
                     />
                   </div>
                   <div>
@@ -1270,11 +1474,19 @@ export function SessionInvite({
                     </button>
                   </div>
                 ) : (
-                  <label className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center hover:border-[var(--theme-accent)]/50 transition-colors cursor-pointer block">
+                  <label className={`border-2 border-dashed rounded-lg p-8 text-center hover:border-[var(--theme-accent)]/50 transition-colors cursor-pointer block ${
+                    uiMode === "dark" ? "border-white/20" : "border-black/30"
+                  }`}>
                     <input type="file" accept="image/*" onChange={handleProofImageUpload} className="hidden" />
-                    <Upload className="w-8 h-8 text-white/40 mx-auto mb-2" />
-                    <p className="text-sm text-white/60">Click to upload or drag and drop</p>
-                    <p className="text-xs text-white/40 mt-1">Screenshot or photo</p>
+                    <Upload className={`w-8 h-8 mx-auto mb-2 ${
+                      uiMode === "dark" ? "text-white/40" : "text-black/50"
+                    }`} />
+                    <p className={`text-sm ${
+                      uiMode === "dark" ? "text-white/60" : "text-black/70"
+                    }`}>Click to upload or drag and drop</p>
+                    <p className={`text-xs mt-1 ${
+                      uiMode === "dark" ? "text-white/40" : "text-black/50"
+                    }`}>Screenshot or photo</p>
                   </label>
                 )}
               </Card>
@@ -1285,24 +1497,88 @@ export function SessionInvite({
       </LayoutGroup>
 
       <Dialog open={isDateModalOpen} onOpenChange={setIsDateModalOpen}>
-        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Set a date</DialogTitle>
+        <DialogContent className={`${uiMode === "dark" ? "bg-slate-900 border-white/10 text-white" : "bg-white border-black/10 text-black"} max-w-md max-h-[90vh] overflow-hidden flex flex-col p-0`}>
+          <DialogHeader className="px-6 pt-6 pb-4">
+            <DialogTitle className={`text-xl font-semibold ${uiMode === "dark" ? "text-white" : "text-black"}`}>Set a date</DialogTitle>
           </DialogHeader>
-          <div className="space-y-2 mt-4">
-            {suggestedDates.map((date) => (
-              <motion.button
-                key={date}
-                onClick={() => handleDateSave(date)}
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.99 }}
-                transition={{ duration: 0.15 }}
-                className="w-full bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 text-left flex items-center justify-between group"
+          
+          {/* Scrollable content */}
+          <div className="px-6 pb-28 overflow-y-auto flex-1">
+            {/* Calendar */}
+            {selectedDateDraft && (
+              <div className="mb-6">
+                <MobileCalendar
+                  value={selectedDateDraft}
+                  onChange={(date) => setSelectedDateDraft(date)}
+                  uiMode={uiMode}
+                />
+              </div>
+            )}
+
+            {/* Time Picker */}
+            <div className="mb-6">
+              <label className={`text-sm font-medium mb-3 block ${uiMode === "dark" ? "text-white/80" : "text-black/80"}`}>
+                Time
+              </label>
+              <TimePickerWheels
+                hour={selectedTimeDraft.hour}
+                minute={selectedTimeDraft.minute}
+                ampm={selectedTimeDraft.ampm}
+                onHourChange={(hour) => setSelectedTimeDraft(prev => ({ ...prev, hour }))}
+                onMinuteChange={(minute) => setSelectedTimeDraft(prev => ({ ...prev, minute }))}
+                onAmpmChange={(ampm) => setSelectedTimeDraft(prev => ({ ...prev, ampm }))}
+                uiMode={uiMode}
+              />
+            </div>
+
+            {/* Duration Picker */}
+            <div className="mb-4">
+              <label className={`text-sm font-medium mb-3 block ${uiMode === "dark" ? "text-white/80" : "text-black/80"}`}>
+                Duration
+              </label>
+              <div className="overflow-x-auto -mx-6 px-6" style={{ scrollbarWidth: "none", msOverflowStyle: "none", WebkitOverflowScrolling: "touch" }}>
+                <div className="flex gap-3 pb-2" style={{ width: "max-content" }}>
+                  {[1, 1.5, 2, 2.5, 3, 3.5, 4].map((duration) => {
+                    const isSelected = selectedDurationDraft === duration
+                    return (
+                      <button
+                        key={duration}
+                        onClick={() => setSelectedDurationDraft(duration)}
+                        className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
+                          isSelected
+                            ? "bg-lime-500 text-black font-semibold"
+                            : uiMode === "dark"
+                            ? "bg-white/5 text-white/80 hover:bg-white/10 border border-white/10"
+                            : "bg-black/5 text-black/80 hover:bg-black/10 border border-black/10"
+                        }`}
+                      >
+                        {duration === 1 ? "1 hour" : `${duration} hours`}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Sticky bottom action bar */}
+          <div className={`sticky bottom-0 left-0 right-0 z-10 border-t ${uiMode === "dark" ? "border-white/10 bg-slate-900/95" : "border-black/10 bg-white/95"} backdrop-blur px-6 py-4`}>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setIsDateModalOpen(false)}
+                className={`flex-1 ${uiMode === "dark" ? "border-white/20 bg-white/5 hover:bg-white/10 text-white" : "border-black/20 bg-black/5 hover:bg-black/10 text-black"}`}
               >
-                <span className="text-white/90">{date}</span>
-                {eventDate === date && <Check className="w-5 h-5 text-[var(--theme-accent-light)]" />}
-              </motion.button>
-            ))}
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDateSave}
+                disabled={!selectedDateDraft}
+                className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -1310,34 +1586,58 @@ export function SessionInvite({
       <Dialog open={isLocationModalOpen} onOpenChange={setIsLocationModalOpen}>
         <DialogContent className="bg-slate-900 border-white/10 text-white max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Search location</DialogTitle>
+            <DialogTitle className="text-xl font-semibold">Set location</DialogTitle>
           </DialogHeader>
-          <div className="mt-4">
-            <div className="relative mb-4">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+          <div className="mt-4 space-y-4">
+            {/* Location Name Input */}
+            <div>
+              <label className={`text-sm ${mutedText} mb-2 block`}>Location name</label>
               <Input
-                placeholder="Search for a location..."
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/40 pl-10 focus:ring-[var(--theme-accent)]/50"
+                value={locationDraft}
+                onChange={(e) => setLocationDraft(e.target.value)}
+                placeholder="e.g. Bukit Jalil Sports Arena, Court 2"
+                className={`${inputBg} ${inputBorder} ${strongText} ${inputPlaceholder} focus:ring-[var(--theme-accent)]/50`}
               />
             </div>
-            <div className="space-y-2">
-              {suggestedLocations.map((location) => (
-                <motion.button
-                  key={location}
-                  onClick={() => handleLocationSave(location)}
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.99 }}
-                  transition={{ duration: 0.15 }}
-                  className="w-full bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 text-left flex items-center justify-between group"
-                >
-                  <div className="flex items-center gap-3">
-                    <MapPin className="w-5 h-5 text-[var(--theme-accent-light)]" />
-                    <span className="text-white/90">{location}</span>
+
+            {/* Google Maps Link Input */}
+            <div>
+              <label className={`text-sm ${mutedText} mb-2 block`}>Google Maps link (optional)</label>
+              <Input
+                type="url"
+                value={mapUrlDraft}
+                onChange={(e) => setMapUrlDraft(e.target.value)}
+                placeholder="Paste Google Maps link (optional)"
+                className={`${inputBg} ${inputBorder} ${strongText} ${inputPlaceholder} focus:ring-[var(--theme-accent)]/50`}
+              />
                   </div>
-                  {eventLocation === location && <Check className="w-5 h-5 text-[var(--theme-accent-light)]" />}
-                </motion.button>
-              ))}
+
+            {/* Helper Text */}
+            <div className="space-y-2 pt-2">
+              <p className="text-xs text-white/60">
+                Beta: Autocomplete isn't enabled yet to keep costs low. Please type your location manually.
+              </p>
+              <p className="text-xs text-white/60">
+                Tip: Paste a Google Maps link to enable the map preview.
+              </p>
             </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-3 mt-6 pt-4 border-t border-white/10">
+            <Button
+              variant="outline"
+              onClick={() => setIsLocationModalOpen(false)}
+              className="flex-1 border-white/20 bg-white/5 hover:bg-white/10 text-white"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleLocationSave}
+              className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full"
+            >
+              Save
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -1346,10 +1646,10 @@ export function SessionInvite({
         <DialogContent className="bg-slate-900 border-white/10 text-white max-w-md p-0 overflow-hidden">
           {/* Header */}
           <div className="px-6 pt-6 pb-3">
-            <DialogHeader>
-              <DialogTitle className="text-xl font-semibold">Choose a cover</DialogTitle>
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold">Choose a cover</DialogTitle>
               <p className="text-sm text-white/60 mt-1">Select a style for {selectedSport}</p>
-            </DialogHeader>
+          </DialogHeader>
           </div>
 
           {/* Scrollable options */}
@@ -1361,7 +1661,7 @@ export function SessionInvite({
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 transition={{ duration: 0.15 }}
-                className={`relative w-full aspect-video rounded-xl overflow-hidden border-2 transition-all focus:outline-none focus:ring-0 ${
+                className={`relative w-full aspect-video rounded-xl overflow-hidden border-2 transition-all ${
                   pendingCoverUrl === null
                     ? "border-[var(--theme-accent)] ring-2 ring-[var(--theme-accent)]/50"
                     : "border-white/10 hover:border-white/30"
@@ -1399,17 +1699,17 @@ export function SessionInvite({
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   transition={{ duration: 0.15 }}
-                  className={`relative w-full aspect-video rounded-xl overflow-hidden border-2 transition-all focus:outline-none focus:ring-0 ${
+                  className={`relative w-full aspect-video rounded-xl overflow-hidden border-2 transition-all ${
                     pendingCoverUrl === option.path
                       ? "border-[var(--theme-accent)] ring-2 ring-[var(--theme-accent)]/50"
                       : "border-white/10 hover:border-white/30"
-                  }`}
-                >
-                  <img
+                }`}
+              >
+                <img
                     src={option.path || "/placeholder.svg"}
                     alt={option.label}
-                    className="w-full h-full object-cover"
-                  />
+                  className="w-full h-full object-cover"
+                />
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/60 to-transparent p-4">
                     <div className="flex items-center justify-between">
                       <span className="text-white font-medium text-sm">{option.label}</span>
@@ -1426,10 +1726,10 @@ export function SessionInvite({
                       <div className="absolute top-3 right-3 bg-[var(--theme-accent)] rounded-full p-1.5">
                         <Check className="w-4 h-4 text-black" />
                       </div>
-                    </div>
-                  )}
-                </motion.button>
-              ))}
+                  </div>
+                )}
+              </motion.button>
+            ))}
             </div>
           </div>
 

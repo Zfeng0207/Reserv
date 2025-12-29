@@ -88,18 +88,18 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
                     Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
-                      </DropdownMenu>
+              </DropdownMenu>
                     </>
-                  ) : (
+            ) : (
                     <>
-                    <button
-                      onClick={() => setLoginDialogOpen(true)}
+              <button
+                onClick={() => setLoginDialogOpen(true)}
                         className="text-gray-700 dark:text-white/70 hover:text-gray-900 dark:hover:text-white text-sm font-medium transition-colors"
-                    >
-                      Login
-                    </button>
+              >
+                Login
+              </button>
                     </>
-                  )}
+            )}
           </div>
         </div>
       </nav>

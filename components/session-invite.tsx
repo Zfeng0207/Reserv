@@ -39,6 +39,8 @@ import { DraftNameDialog } from "@/components/drafts/draft-name-dialog"
 import { DraftsDialog } from "@/components/drafts/drafts-dialog"
 import type { DraftData, DraftSummary } from "@/app/actions/drafts"
 import { listDrafts, saveDraft, getDraft, deleteDraft, overwriteDraft } from "@/app/actions/drafts"
+import { PublishShareSheet } from "@/components/publish-share-sheet"
+import { HostSessionAnalytics } from "@/components/host/host-session-analytics"
 
 // Default cover background colors by sport (when no cover image is set)
 const DEFAULT_COVER_BG: Record<string, string> = {
@@ -103,6 +105,10 @@ interface SessionInviteProps {
   initialDescription?: string | null
   demoMode?: boolean
   demoParticipants?: DemoParticipant[]
+  hidePreviewBanner?: boolean // New prop to hide preview banner for public view
+  onJoinClick?: () => void // RSVP handler for public view
+  onDeclineClick?: () => void // RSVP handler for public view
+  initialIsPublished?: boolean // New prop to indicate if session is published
 }
 
 export function SessionInvite({
@@ -120,6 +126,10 @@ export function SessionInvite({
   initialDescription = null,
   demoMode = false,
   demoParticipants = [],
+  hidePreviewBanner = false,
+  onJoinClick,
+  onDeclineClick,
+  initialIsPublished = false,
 }: SessionInviteProps) {
   console.log(`[SessionInvite] Render:`, { sessionId, initialCoverUrl, initialSport, initialEditMode, initialPreviewMode })
   
@@ -132,9 +142,18 @@ export function SessionInvite({
   const { authUser, isAuthenticated } = useAuth()
   const [isEditMode, setIsEditMode] = useState(initialEditMode)
   const [isPreviewMode, setIsPreviewMode] = useState(initialPreviewMode)
+  const [isPublished, setIsPublished] = useState(initialIsPublished)
+  const [actualSessionId, setActualSessionId] = useState<string | undefined>(sessionId) // Store actual session ID (may be updated after creation)
   const [scrolled, setScrolled] = useState(false)
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
   const { toast } = useToast()
+
+  // Update actualSessionId when sessionId prop changes
+  useEffect(() => {
+    if (sessionId) {
+      setActualSessionId(sessionId)
+    }
+  }, [sessionId])
 
   // Draft state
   const [draftsOpen, setDraftsOpen] = useState(false)
@@ -143,6 +162,12 @@ export function SessionInvite({
   const [drafts, setDrafts] = useState<DraftSummary[]>([])
   const [isOverwriteMode, setIsOverwriteMode] = useState(false)
   const [loadingDrafts, setLoadingDrafts] = useState(false)
+
+  // Publish share sheet state
+  const [publishShareSheetOpen, setPublishShareSheetOpen] = useState(false)
+  const [publishedUrl, setPublishedUrl] = useState("")
+  const [publishedHostSlug, setPublishedHostSlug] = useState("")
+  const [publishedCode, setPublishedCode] = useState("")
 
   // Placeholder constants for validation
   const PLACEHOLDERS = {
@@ -1005,24 +1030,103 @@ export function SessionInvite({
 
     // User is authenticated, proceed with publish
     try {
-      // TODO: Implement actual publish API call here
-      // For now, simulate success
-      const inviteLink = `${window.location.origin}/s/${pathname.split("/").pop() || "demo"}`
-      
-      // Copy to clipboard
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(inviteLink)
+      // Extract session ID from pathname (could be /host/sessions/[id]/edit) or use sessionId prop
+      let publishSessionId: string | undefined = sessionId
+      if (!publishSessionId && pathname.includes("/host/sessions/")) {
+        const parts = pathname.split("/")
+        const sessionsIndex = parts.indexOf("sessions")
+        if (sessionsIndex >= 0 && parts[sessionsIndex + 1]) {
+          publishSessionId = parts[sessionsIndex + 1]
+        }
       }
-      
-      toast({
-        title: "Published!",
-        description: "Your session has been published and the invite link has been copied to your clipboard.",
-        variant: "success",
+
+      // Get host name for slug generation
+      const hostNameForPublish = displayHostName || getUserProfileName() || "host"
+
+      // Map sport display name to enum value
+      const sportEnumMap: Record<string, "badminton" | "pickleball" | "volleyball" | "other"> = {
+        "Badminton": "badminton",
+        "Pickleball": "pickleball",
+        "Volleyball": "volleyball",
+        "Futsal": "other",
+      }
+      const sportEnum = sportEnumMap[selectedSport] || "badminton"
+
+      // Parse eventDate to get start_at and end_at ISO strings
+      let startAt = new Date().toISOString() // Default to now if parsing fails
+      let endAt: string | null = null
+
+      if (eventDate) {
+        const parsed = parseEventDate(eventDate)
+        if (parsed) {
+          const startDate = new Date(parsed.date)
+          // Convert hour to 24h format
+          let hour24 = parsed.hour
+          if (parsed.ampm === "PM" && parsed.hour !== 12) {
+            hour24 = parsed.hour + 12
+          } else if (parsed.ampm === "AM" && parsed.hour === 12) {
+            hour24 = 0
+          }
+          startDate.setHours(hour24, parsed.minute, 0, 0)
+          startAt = startDate.toISOString()
+
+          // Calculate end_at
+          const endDate = new Date(startDate)
+          endDate.setHours(endDate.getHours() + parsed.durationHours)
+          endAt = endDate.toISOString()
+        }
+      }
+
+      // Call publish server action (creates session if needed, then publishes)
+      const { publishSession } = await import("@/app/host/sessions/[id]/actions")
+      const result = await publishSession({
+        sessionId: publishSessionId || null, // Pass null if "new" or doesn't exist
+        title: eventTitle,
+        startAt,
+        endAt,
+        location: eventLocation || null,
+        capacity: eventCapacity || null,
+        hostName: hostNameForPublish,
+        sport: sportEnum,
+        description: eventDescription || null,
+        coverUrl: optimisticCoverUrl || null,
       })
-    } catch (error) {
+
+      if (!result.ok) {
+        toast({
+          title: "Publish failed",
+          description: result.error || "Failed to publish session. Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Generate invite link using new format: /{hostSlug}/{code}
+      const inviteLink = `${window.location.origin}/${result.hostSlug}/${result.publicCode}`
+      
+      // Set published URL first
+      setPublishedUrl(inviteLink)
+      setPublishedHostSlug(result.hostSlug)
+      setPublishedCode(result.publicCode)
+      
+      // Update actualSessionId if session was created
+      if (result.sessionId) {
+        setActualSessionId(result.sessionId)
+        // Store in sessionStorage so we can navigate after share sheet closes
+        if (typeof window !== "undefined" && result.sessionId !== sessionId) {
+          sessionStorage.setItem("pending_navigate_to_session", result.sessionId)
+        }
+      }
+
+      // Open share sheet immediately (don't navigate yet - navigation will happen after sheet closes)
+      setPublishShareSheetOpen(true)
+
+      // Don't switch to analytics view yet - wait for user to close the share sheet
+    } catch (error: any) {
+      console.error("[handlePublish] Error:", error)
       toast({
         title: "Publish failed",
-        description: "Failed to publish session. Please try again.",
+        description: error?.message || "Failed to publish session. Please try again.",
         variant: "destructive",
       })
     }
@@ -1280,6 +1384,43 @@ export function SessionInvite({
   const inputBorder = uiMode === "dark" ? "border-white/10" : "border-black/10"
   const inputPlaceholder = uiMode === "dark" ? "placeholder:text-white/40" : "placeholder:text-black/40"
 
+  // If published, show analytics view instead of edit/preview
+  // But don't show analytics if share sheet is open (let user see the share sheet first)
+  if (isPublished && actualSessionId && !demoMode && !publishShareSheetOpen) {
+    return (
+      <div className="min-h-screen sporty-bg">
+        <TopNav showCreateNow={false} />
+        <HostSessionAnalytics sessionId={actualSessionId} uiMode={uiMode} />
+        {/* Editor Bottom Bar with Edit button */}
+        <AnimatePresence>
+          <motion.div
+            key="editorbar"
+            initial={{ y: 12, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 12, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+          >
+            <EditorBottomBar
+              onPreview={() => {}}
+              onEdit={
+                actualSessionId
+                  ? () => {
+                      router.push(`/host/sessions/${actualSessionId}/edit`)
+                    }
+                  : undefined
+              }
+              theme={theme}
+              onThemeChange={setTheme}
+              uiMode={uiMode}
+              onUiModeChange={setUiMode}
+              isPublished={true}
+            />
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    )
+  }
+
   return (
     <div
       className={`min-h-screen ${uiMode === "dark" 
@@ -1292,7 +1433,7 @@ export function SessionInvite({
       data-effect-vignette={effects.vignette}
     >
       {/* Top Navigation - show in edit mode or demo mode */}
-      {(isEditMode || demoMode) && <TopNav showCreateNow={false} />}
+      <TopNav showCreateNow={false} />
 
       {effects.grain && (
         <div className="fixed inset-0 pointer-events-none z-[100] opacity-[0.015] mix-blend-overlay">
@@ -1315,7 +1456,7 @@ export function SessionInvite({
 
       {/* Preview Bar - sticky below TopNav */}
       <AnimatePresence>
-        {isPreviewMode && (
+        {isPreviewMode && !hidePreviewBanner && (
           <motion.div
             key="previewbar"
             initial={{ y: -8, opacity: 0 }}
@@ -2397,9 +2538,9 @@ export function SessionInvite({
         </DialogContent>
       </Dialog>
 
-      {/* Editor Bottom Bar - Edit mode only */}
+      {/* Editor Bottom Bar - Edit mode only OR when published (shows Edit button) */}
       <AnimatePresence>
-      {isEditMode && !isPreviewMode && (
+      {(isEditMode && !isPreviewMode) || isPublished ? (
           <motion.div
             key="editorbar"
             initial={{ y: 12, opacity: 0 }}
@@ -2416,9 +2557,9 @@ export function SessionInvite({
           onThemeChange={setTheme}
           uiMode={uiMode}
           onUiModeChange={setUiMode}
-        />
+          />
           </motion.div>
-      )}
+      ) : null}
       </AnimatePresence>
 
       {/* Login Dialog for publish gating */}
@@ -2454,6 +2595,33 @@ export function SessionInvite({
         isLoading={loadingDrafts}
       />
 
+      {/* Publish Share Sheet */}
+      <PublishShareSheet
+        open={publishShareSheetOpen}
+        onOpenChange={(open) => {
+          setPublishShareSheetOpen(open)
+          // When share sheet closes, handle navigation and switch to analytics view
+          if (!open && publishedCode) {
+            // Navigate to new session URL if needed (only if session was created)
+            if (typeof window !== "undefined") {
+              const pendingNavigateId = sessionStorage.getItem("pending_navigate_to_session")
+              if (pendingNavigateId) {
+                sessionStorage.removeItem("pending_navigate_to_session")
+                router.replace(`/host/sessions/${pendingNavigateId}/edit`)
+              }
+            }
+            // Mark as published and switch to analytics view
+            setIsPublished(true)
+            setIsEditMode(false)
+            setIsPreviewMode(false)
+          }
+        }}
+        publishedUrl={publishedUrl}
+        hostSlug={publishedHostSlug}
+        publicCode={publishedCode}
+        uiMode={uiMode}
+      />
+
       {/* Sticky RSVP Dock - Only show in preview mode or when not in edit mode */}
       <AnimatePresence>
       {(!isEditMode || isPreviewMode) && (
@@ -2467,10 +2635,14 @@ export function SessionInvite({
         >
           <div className="mx-auto max-w-md px-4 pb-4">
             <div className={`${glassCard} rounded-2xl p-4 shadow-2xl flex gap-3`}>
-              <Button className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20">
+              <Button 
+                onClick={onJoinClick || undefined}
+                className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
+              >
                 Join session
               </Button>
               <Button
+                onClick={onDeclineClick || undefined}
                 variant="outline"
                 className={`flex-1 bg-transparent ${uiMode === "dark" ? "border-white/20 text-white hover:bg-white/10" : "border-black/20 text-black hover:bg-black/10"} rounded-full h-12`}
               >

@@ -3,7 +3,7 @@
 import { useState, useEffect as ReactUseEffect } from "react"
 import * as React from "react"
 import { motion } from "framer-motion"
-import { Palette, Eye, Sun, Moon, FileText } from "lucide-react"
+import { Palette, Eye, Sun, Moon, FileText, Edit } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription } from "@/components/ui/drawer"
@@ -14,23 +14,27 @@ import { useToast } from "@/hooks/use-toast"
 interface EditorBottomBarProps {
   onPreview: () => void
   onPublish?: () => void
+  onEdit?: () => void // New prop for Edit action when published
   onSaveDraft?: () => void
   onDrafts?: () => void
   theme?: string
   onThemeChange?: (theme: string) => void
   uiMode: "dark" | "light"
   onUiModeChange: (mode: "dark" | "light") => void
+  isPublished?: boolean // New prop to indicate if session is published
 }
 
 export function EditorBottomBar({
   onPreview,
   onPublish,
+  onEdit,
   onSaveDraft,
   onDrafts,
   theme,
   onThemeChange,
   uiMode,
   onUiModeChange,
+  isPublished = false,
 }: EditorBottomBarProps) {
   const [themeDrawerOpen, setThemeDrawerOpen] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState(theme || "badminton")
@@ -81,7 +85,21 @@ export function EditorBottomBar({
         transition={{ duration: 0.3 }}
         className="fixed bottom-0 left-0 right-0 z-40 pb-safe"
       >
-        <div className="mx-auto max-w-md px-4 pb-4">
+        <div className="mx-auto max-w-md px-4 pb-4 relative">
+          {/* LIVE Indicator Badge */}
+          {isPublished && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.1 }}
+              className="absolute -top-2 left-6 z-50"
+            >
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-red-500/90 backdrop-blur-sm rounded-full border border-red-400/50 shadow-lg">
+                <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                <span className="text-xs font-semibold text-white">LIVE</span>
+              </div>
+            </motion.div>
+          )}
           <div className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-2xl">
             {/* Icon Buttons Row */}
             <div className="flex items-center justify-around mb-3">
@@ -131,30 +149,43 @@ export function EditorBottomBar({
 
             {/* Action Buttons */}
             <div className="flex gap-2">
-              {onSaveDraft && (
+              {isPublished && onEdit ? (
                 <Button
-                  onClick={handleSaveDraftClick}
-                  variant="outline"
-                  className="flex-1 border-white/20 bg-white/5 hover:bg-white/10 text-white font-medium rounded-full h-12"
+                  onClick={onEdit}
+                  variant="destructive"
+                  className="flex-1 bg-red-500 hover:bg-red-600 text-white font-medium rounded-full h-12 shadow-lg shadow-red-500/20"
                 >
-                  Save draft
+                  <Edit className="w-4 h-4 mr-2" />
+                  Edit
                 </Button>
-              )}
-              {onPublish && (
-                <Button
-                  onClick={onPublish}
-                  className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
-                >
-                  Publish
-                </Button>
-              )}
-              {!onPublish && !onSaveDraft && (
-            <Button
-                  onClick={handleSaveDraftClick}
-              className="w-full bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
-            >
-              Save draft
-            </Button>
+              ) : (
+                <>
+                  {onSaveDraft && (
+                    <Button
+                      onClick={handleSaveDraftClick}
+                      variant="outline"
+                      className="flex-1 border-white/20 bg-white/5 hover:bg-white/10 text-white font-medium rounded-full h-12"
+                    >
+                      Save draft
+                    </Button>
+                  )}
+                  {onPublish && (
+                    <Button
+                      onClick={onPublish}
+                      className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
+                    >
+                      Publish
+                    </Button>
+                  )}
+                  {!onPublish && !onSaveDraft && (
+                    <Button
+                      onClick={handleSaveDraftClick}
+                      className="w-full bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
+                    >
+                      Save draft
+                    </Button>
+                  )}
+                </>
               )}
             </div>
           </div>

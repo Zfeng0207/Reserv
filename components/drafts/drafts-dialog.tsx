@@ -108,7 +108,19 @@ export function DraftsDialog({
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
+                  <button
+                    onClick={() => {
+                      if (!isOverwriteMode) {
+                        onLoad(draft.id)
+                        onOpenChange(false)
+                      }
+                    }}
+                    className={cn(
+                      "flex-1 min-w-0 text-left cursor-pointer",
+                      !isOverwriteMode && "hover:opacity-80 transition-opacity"
+                    )}
+                    disabled={isOverwriteMode}
+                  >
                     <h3 className={cn(
                       "font-medium text-base mb-1 truncate",
                       uiMode === "dark" ? "text-white" : "text-black"
@@ -121,7 +133,7 @@ export function DraftsDialog({
                     )}>
                       {formatRelativeTime(draft.updated_at)}
                     </p>
-                  </div>
+                  </button>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {isOverwriteMode ? (
                       <Button
@@ -135,42 +147,27 @@ export function DraftsDialog({
                         Overwrite
                       </Button>
                     ) : (
-                      <>
-                        <Button
-                          onClick={() => {
-                            onLoad(draft.id)
-                            onOpenChange(false)
-                          }}
-                          size="sm"
-                          variant="outline"
-                          className={cn(
-                            "rounded-full text-xs px-3 h-8",
-                            uiMode === "dark"
-                              ? "bg-white/5 text-white border-white/10 hover:bg-white/10"
-                              : "bg-black/5 text-black border-black/10 hover:bg-black/10"
-                          )}
-                        >
-                          Load
-                        </Button>
-                        <Button
-                          onClick={() => handleDelete(draft.id)}
-                          size="sm"
-                          variant="outline"
-                          disabled={deletingId === draft.id}
-                          className={cn(
-                            "rounded-full text-xs px-3 h-8",
-                            uiMode === "dark"
-                              ? "bg-white/5 text-red-400 border-red-400/20 hover:bg-red-400/10"
-                              : "bg-black/5 text-red-600 border-red-600/20 hover:bg-red-600/10"
-                          )}
-                        >
-                          {deletingId === draft.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-3 h-3" />
-                          )}
-                        </Button>
-                      </>
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDelete(draft.id)
+                        }}
+                        size="sm"
+                        variant="outline"
+                        disabled={deletingId === draft.id}
+                        className={cn(
+                          "rounded-full px-3 h-10 w-10 flex items-center justify-center",
+                          uiMode === "dark"
+                            ? "bg-red-500/10 text-red-400 border-red-400/30 hover:bg-red-500/20 hover:border-red-400/50"
+                            : "bg-red-50 text-red-600 border-red-300 hover:bg-red-100 hover:border-red-400"
+                        )}
+                      >
+                        {deletingId === draft.id ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-5 h-5" />
+                        )}
+                      </Button>
                     )}
                   </div>
                 </div>

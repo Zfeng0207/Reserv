@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache"
 import { createClient, getUserId } from "@/lib/supabase/server/server"
 import { redirect } from "next/navigation"
+import { generateShortCode } from "@/lib/utils/short-code"
+import { toSlug } from "@/lib/utils/slug"
 
 /**
  * Update session hostName
@@ -105,3 +107,336 @@ export async function updateSessionCoverUrl(sessionId: string, coverUrl: string 
   return { data }
 }
 
+/**
+ * Get published session info (for already published sessions)
+ */
+export async function getPublishedSessionInfo(
+  sessionId: string
+): Promise<
+  | { ok: true; publicCode: string; hostSlug: string; isPublished: boolean }
+  | { ok: false; error: string }
+> {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  // Get session with public_code and host_slug
+  const { data: session, error: fetchError } = await supabase
+    .from("sessions")
+    .select("host_id, public_code, host_slug, status")
+    .eq("id", sessionId)
+    .single()
+
+  if (fetchError || !session) {
+    return { ok: false, error: "Session not found" }
+  }
+
+  if (session.host_id !== userId) {
+    return { ok: false, error: "Unauthorized: You don't own this session" }
+  }
+
+  const isPublished = session.status === "open" && !!session.public_code
+
+  if (!isPublished) {
+    return { ok: false, error: "Session is not published" }
+  }
+
+  // Generate host_slug if missing (shouldn't happen, but handle gracefully)
+  const hostSlug = session.host_slug || "host"
+
+  return {
+    ok: true,
+    publicCode: session.public_code!,
+    hostSlug,
+    isPublished: true,
+  }
+}
+
+/**
+ * Get session analytics data (host-only)
+ */
+export async function getSessionAnalytics(sessionId: string): Promise<
+  | {
+      ok: true
+      attendance: {
+        accepted: number
+        capacity: number
+        declined: number
+        unanswered: number
+      }
+      payments: {
+        collected: number
+        total: number
+        paidCount: number
+      }
+      acceptedList: Array<{ id: string; display_name: string; created_at: string }>
+      declinedList: Array<{ id: string; display_name: string; created_at: string }>
+      viewedCount: number // Placeholder for now
+      pricePerPerson: number | null
+    }
+  | { ok: false; error: string }
+> {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  // Get session with capacity and verify ownership
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .select("id, host_id, capacity")
+    .eq("id", sessionId)
+    .single()
+
+  if (sessionError || !session) {
+    return { ok: false, error: "Session not found" }
+  }
+
+  if (session.host_id !== userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  const capacity = session.capacity || 0
+
+  // Get participants
+  const { data: participants, error: participantsError } = await supabase
+    .from("participants")
+    .select("id, display_name, status, created_at")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: true })
+
+  if (participantsError) {
+    return { ok: false, error: participantsError.message }
+  }
+
+  const accepted = participants?.filter((p) => p.status === "confirmed").length || 0
+  const declined = participants?.filter((p) => p.status === "cancelled").length || 0
+  const unanswered = Math.max(0, capacity - accepted - declined)
+
+  const acceptedList =
+    participants
+      ?.filter((p) => p.status === "confirmed")
+      .map((p) => ({
+        id: p.id,
+        display_name: p.display_name,
+        created_at: p.created_at,
+      })) || []
+
+  const declinedList =
+    participants
+      ?.filter((p) => p.status === "cancelled")
+      .map((p) => ({
+        id: p.id,
+        display_name: p.display_name,
+        created_at: p.created_at,
+      })) || []
+
+  // Get payment data (sum of approved payment proofs)
+  // Note: We'll need to check if there's a price field in sessions or calculate from payment_proofs
+  const { data: paymentProofs, error: paymentError } = await supabase
+    .from("payment_proofs")
+    .select("amount, payment_status")
+    .eq("session_id", sessionId)
+    .eq("payment_status", "approved")
+
+  // For now, use amount from payment proofs. If sessions table has price field, use that instead
+  const pricePerPerson = null // TODO: Get from sessions table if it has price field
+  const paidCount = paymentProofs?.length || 0
+  const collected = paymentProofs?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0
+  const total = pricePerPerson ? pricePerPerson * accepted : 0
+
+  return {
+    ok: true,
+    attendance: {
+      accepted,
+      capacity,
+      declined,
+      unanswered,
+    },
+    payments: {
+      collected,
+      total,
+      paidCount,
+    },
+    acceptedList,
+    declinedList,
+    viewedCount: 0, // Placeholder - no backend tracking yet
+    pricePerPerson,
+  }
+}
+
+/**
+ * Helper to check if a string is a valid UUID
+ */
+function isValidUUID(str: string | null | undefined): boolean {
+  if (!str) return false
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  return uuidRegex.test(str)
+}
+
+/**
+ * Publish a session (generate public_code, set host_slug, set status to 'open')
+ * Creates session if it doesn't exist, then publishes it.
+ * Idempotent: if already published, returns existing public_code and host_slug
+ */
+export async function publishSession(
+  sessionData: {
+    sessionId?: string | null
+    title: string
+    startAt: string
+    endAt: string | null
+    location: string | null
+    capacity: number | null
+    hostName: string
+    sport: "badminton" | "pickleball" | "volleyball" | "other"
+    description?: string | null
+    coverUrl?: string | null
+  }
+): Promise<{ ok: true; publicCode: string; hostSlug: string; sessionId: string } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  // Ensure user exists in public.users table (required for foreign key constraint)
+  // Try to insert user, ignore if already exists (unique constraint violation)
+  const { error: userInsertError } = await supabase
+    .from("users")
+    .insert({ id: userId })
+
+  // 23505 is PostgreSQL unique_violation error code - user already exists, which is fine
+  if (userInsertError && userInsertError.code !== "23505") {
+    console.error("[publishSession] Error ensuring user exists:", userInsertError)
+    // For other errors, continue anyway - might be a transient issue
+  }
+
+  let actualSessionId: string | null = null
+  let session: { host_id: string; public_code: string | null; host_slug: string | null; status: string } | null = null
+
+  // Check if sessionId is provided and valid UUID
+  if (sessionData.sessionId && isValidUUID(sessionData.sessionId)) {
+    // Try to fetch existing session
+    const { data: fetchedSession, error: fetchError } = await supabase
+      .from("sessions")
+      .select("id, host_id, public_code, host_slug, status")
+      .eq("id", sessionData.sessionId)
+      .single()
+
+    if (!fetchError && fetchedSession) {
+      // Session exists, verify ownership
+      if (fetchedSession.host_id !== userId) {
+        return { ok: false, error: "Unauthorized: You don't own this session" }
+      }
+      session = fetchedSession
+      actualSessionId = fetchedSession.id
+    }
+  }
+
+  // If session doesn't exist, create it
+  if (!session) {
+    const { data: newSession, error: createError } = await supabase
+      .from("sessions")
+      .insert({
+        host_id: userId,
+        title: sessionData.title,
+        start_at: sessionData.startAt,
+        end_at: sessionData.endAt,
+        location: sessionData.location,
+        capacity: sessionData.capacity,
+        host_name: sessionData.hostName,
+        sport: sessionData.sport,
+        description: sessionData.description || null,
+        cover_url: sessionData.coverUrl || null,
+        status: "draft", // Will be set to "open" after publishing
+      })
+      .select("id, host_id, public_code, host_slug, status")
+      .single()
+
+    if (createError || !newSession) {
+      return { ok: false, error: createError?.message || "Failed to create session" }
+    }
+
+    session = newSession
+    actualSessionId = newSession.id
+  }
+
+  if (!actualSessionId) {
+    return { ok: false, error: "Failed to get session ID" }
+  }
+
+  // If already published (has public_code and status is 'open'), return existing code and slug
+  // Also update host_slug if it changed (idempotent but can update slug)
+  if (session.public_code && session.status === "open") {
+    const hostSlug = session.host_slug || toSlug(sessionData.hostName || "host")
+    // Update host_slug if it's missing or if hostName changed (optional optimization)
+    if (!session.host_slug || session.host_slug !== toSlug(sessionData.hostName || "host")) {
+      const newHostSlug = toSlug(sessionData.hostName || "host")
+      await supabase
+        .from("sessions")
+        .update({ host_slug: newHostSlug })
+        .eq("id", actualSessionId)
+      return { ok: true, publicCode: session.public_code, hostSlug: newHostSlug, sessionId: actualSessionId }
+    }
+    return { ok: true, publicCode: session.public_code, hostSlug, sessionId: actualSessionId }
+  }
+
+  // Generate public_code if it doesn't exist
+  let publicCode = session.public_code
+  if (!publicCode) {
+    // Generate unique code (retry up to 10 times on collision)
+    let attempts = 0
+    let isUnique = false
+
+    while (!isUnique && attempts < 10) {
+      publicCode = generateShortCode()
+      
+      // Check if code already exists
+      const { data: existing } = await supabase
+        .from("sessions")
+        .select("id")
+        .eq("public_code", publicCode)
+        .single()
+
+      if (!existing) {
+        isUnique = true
+      } else {
+        attempts++
+      }
+    }
+
+    if (!isUnique) {
+      return { ok: false, error: "Failed to generate unique code. Please try again." }
+    }
+  }
+
+  // Generate host_slug from hostName
+  const hostSlug = toSlug(sessionData.hostName || "host")
+
+  // Update session with public_code, host_slug, and status = 'open'
+  const { error: updateError } = await supabase
+    .from("sessions")
+    .update({
+      public_code: publicCode,
+      host_slug: hostSlug,
+      status: "open",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", actualSessionId)
+
+  if (updateError) {
+    return { ok: false, error: updateError.message || "Failed to publish session" }
+  }
+
+  // Revalidate paths
+  revalidatePath(`/host/sessions/${actualSessionId}/edit`)
+  revalidatePath(`/${hostSlug}/${publicCode}`)
+
+  return { ok: true, publicCode, hostSlug, sessionId: actualSessionId }
+}

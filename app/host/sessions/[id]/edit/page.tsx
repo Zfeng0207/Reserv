@@ -36,23 +36,29 @@ async function HostSessionEditContent({
   console.log(`[HostSessionEditContent] Session fetched:`, { 
     sessionId, 
     cover_url: session.cover_url,
-    hasCoverUrl: !!session.cover_url 
+    hasCoverUrl: !!session.cover_url,
+    status: session.status,
+    public_code: session.public_code
   })
+
+  // Determine if session is published
+  const isPublished = session.status === "open" && !!session.public_code
 
   return (
     <SessionInvite
       sessionId={sessionId}
       initialCoverUrl={session.cover_url || null}
       initialSport={session.sport || null}
-      initialEditMode={true}
-      initialPreviewMode={isPreviewMode}
+      initialEditMode={!isPublished} // If published, start in analytics view (edit mode = false)
+      initialPreviewMode={isPreviewMode && !isPublished} // Only preview if not published
       initialTitle={session.title || null}
       initialDate={null} // TODO: Format from session.start_at if needed
       initialLocation={session.location || null}
-      initialPrice={session.price || null}
+      initialPrice={(session as any).price || null} // Type assertion since price might exist but not in types
       initialCapacity={session.capacity || null}
       initialHostName={session.host_name || null}
       initialDescription={session.description || null}
+      initialIsPublished={isPublished} // Pass published status
     />
   )
 }

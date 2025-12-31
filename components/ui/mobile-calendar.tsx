@@ -140,9 +140,9 @@ export function MobileCalendar({
 
       {/* Day Names */}
       <div className="grid grid-cols-7 gap-1 mb-2">
-        {dayNames.map((day) => (
+        {dayNames.map((day, idx) => (
           <div
-            key={day}
+            key={`day-name-${idx}`}
             className={`text-center text-xs font-medium ${isDark ? "text-white/60" : "text-black/60"} py-1`}
           >
             {day}

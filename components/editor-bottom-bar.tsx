@@ -2,6 +2,7 @@
 
 import { useState, useEffect as ReactUseEffect } from "react"
 import * as React from "react"
+import { useParams, useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { Palette, Eye, Sun, Moon, FileText, Edit, Ban } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -26,6 +27,7 @@ interface EditorBottomBarProps {
   onUiModeChange: (mode: "dark" | "light") => void
   isPublished?: boolean // New prop to indicate if session is published
   saveDraftLabel?: string // Label for save draft button (e.g., "Update draft" or "Save draft")
+  isLive?: boolean // New prop to indicate if session is live (status === "open")
 }
 
 export function EditorBottomBar({
@@ -41,12 +43,33 @@ export function EditorBottomBar({
   onUiModeChange,
   isPublished = false,
   saveDraftLabel = "Save draft",
+  isLive = false,
 }: EditorBottomBarProps) {
+  const params = useParams()
+  const router = useRouter()
   const [themeDrawerOpen, setThemeDrawerOpen] = useState(false)
   const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false)
   const [isUnpublishing, setIsUnpublishing] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState(theme || "badminton")
   const { toast } = useToast()
+
+  // Derive sessionId from URL params for robust Edit navigation
+  const sessionIdFromUrl = (params?.id as string) ?? ""
+
+  // Handle Edit button click - use URL params as fallback if onEdit not provided
+  const handleEditClick = () => {
+    if (onEdit) {
+      onEdit()
+    } else if (sessionIdFromUrl) {
+      router.push(`/host/sessions/${sessionIdFromUrl}/edit?mode=edit`)
+    } else {
+      toast({
+        title: "Error",
+        description: "Missing session ID",
+        variant: "destructive",
+      })
+    }
+  }
 
   // Sync with parent state if provided
   ReactUseEffect(() => {
@@ -108,8 +131,8 @@ export function EditorBottomBar({
         className="fixed bottom-0 left-0 right-0 z-40 pb-safe"
       >
         <div className="mx-auto max-w-md px-4 pb-4 relative">
-          {/* LIVE Indicator Badge */}
-          {isPublished && (
+          {/* LIVE Indicator Badge - positioned at top-left of bottom bar */}
+          {isLive && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -190,9 +213,9 @@ export function EditorBottomBar({
 
             {/* Action Buttons */}
             <div className="flex gap-2">
-              {isPublished && onEdit ? (
+              {isPublished && (onEdit || sessionIdFromUrl) ? (
                 <Button
-                  onClick={onEdit}
+                  onClick={handleEditClick}
                   className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-white font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
                   aria-label="Edit session"
                 >
@@ -215,7 +238,7 @@ export function EditorBottomBar({
                       onClick={onPublish}
                       className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
                     >
-                      Publish
+                      {isLive ? "Update" : "Publish"}
                     </Button>
                   )}
                   {!onPublish && !onSaveDraft && (

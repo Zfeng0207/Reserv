@@ -176,6 +176,7 @@ export function LiveInviteGuardModal({
   const handleGoToLiveInvite = (session: LiveSession) => {
     if (session.id) {
       onOpenChange(false)
+      // Navigate to analytics page (same route as edit, but analytics view shows when published)
       router.push(`/host/sessions/${session.id}/edit`)
     }
   }

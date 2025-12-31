@@ -41,12 +41,61 @@ export const handleGoogleOAuth = async () => {
   return data
 }
 
-export const handleEmailAuth = () => {
-  if (typeof window === 'undefined') return
+export const handleEmailAuth = async (email: string) => {
+  if (typeof window === 'undefined') {
+    throw new Error('Email auth can only be called from the browser')
+  }
+
+  const supabase = createClient()
   
-  // Redirect to email sign-in page where user can enter their email
-  // The sign-in page can use Supabase's signInWithOtp or signInWithPassword
-  const emailSignInUrl = process.env.NEXT_PUBLIC_EMAIL_SIGNIN_URL || '/auth/signin'
-  window.location.href = emailSignInUrl
+  // OTP code-based sign-in (NOT magic link) - do NOT include emailRedirectTo
+  const { data, error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: true,
+    },
+  })
+
+  // Detailed logging for diagnosis
+  console.log('[OTP] Full response:', { 
+    email, 
+    data, 
+    error: error ? {
+      message: error.message,
+      status: error.status,
+      name: error.name
+    } : null 
+  })
+
+  if (error) {
+    console.error('Error signing in with email:', error)
+    throw new Error(error.message || 'Failed to send verification code')
+  }
+
+  // Log success for diagnosis
+  console.log('[OTP] Successfully sent code to:', email)
+
+  return { success: true }
+}
+
+export const handleEmailOtpVerify = async (email: string, otp: string) => {
+  if (typeof window === 'undefined') {
+    throw new Error('Email OTP verification can only be called from the browser')
+  }
+
+  const supabase = createClient()
+  
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token: otp,
+    type: 'email',
+  })
+
+  if (error) {
+    console.error('Error verifying OTP:', error)
+    throw new Error(error.message || 'Invalid or expired code')
+  }
+
+  return { success: true, data }
 }
 

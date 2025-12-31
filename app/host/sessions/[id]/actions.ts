@@ -535,6 +535,85 @@ export async function publishSession(
 }
 
 /**
+ * Update a live session (updates fields but keeps status as 'open')
+ */
+export async function updateLiveSession(
+  sessionId: string,
+  sessionData: {
+    title: string
+    startAt: string
+    endAt: string | null
+    location: string | null
+    capacity: number | null
+    hostName: string
+    sport: "badminton" | "pickleball" | "volleyball" | "other"
+    description?: string | null
+    coverUrl?: string | null
+  }
+): Promise<{ ok: true; publicCode: string; hostSlug: string } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  // Verify session belongs to user and is live
+  const { data: session, error: fetchError } = await supabase
+    .from("sessions")
+    .select("id, host_id, public_code, host_slug, status")
+    .eq("id", sessionId)
+    .single()
+
+  if (fetchError || !session) {
+    return { ok: false, error: "Session not found" }
+  }
+
+  if (session.host_id !== userId) {
+    return { ok: false, error: "Unauthorized: You don't own this session" }
+  }
+
+  if (session.status !== "open") {
+    return { ok: false, error: "Session is not live" }
+  }
+
+  // Generate host_slug from hostName
+  const hostSlug = toSlug(sessionData.hostName || "host")
+
+  // Update session fields (but keep status as 'open')
+  const { error: updateError } = await supabase
+    .from("sessions")
+    .update({
+      title: sessionData.title,
+      start_at: sessionData.startAt,
+      end_at: sessionData.endAt,
+      location: sessionData.location,
+      capacity: sessionData.capacity,
+      host_name: sessionData.hostName,
+      host_slug: hostSlug,
+      sport: sessionData.sport,
+      description: sessionData.description || null,
+      cover_url: sessionData.coverUrl || null,
+      updated_at: new Date().toISOString(),
+      // NOTE: status remains 'open' (not changed)
+    })
+    .eq("id", sessionId)
+    .eq("host_id", userId)
+
+  if (updateError) {
+    return { ok: false, error: updateError.message || "Failed to update session" }
+  }
+
+  // Revalidate paths
+  revalidatePath(`/host/sessions/${sessionId}/edit`)
+  if (session.public_code && hostSlug) {
+    revalidatePath(`/${hostSlug}/${session.public_code}`)
+  }
+
+  return { ok: true, publicCode: session.public_code!, hostSlug }
+}
+
+/**
  * Unpublish a session (change status from 'open' to 'draft')
  */
 export async function unpublishSession(

@@ -264,7 +264,7 @@ export function PublishShareSheet({
             className="w-full bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
           >
             <ExternalLink className="w-4 h-4 mr-2" />
-            Go to published link
+            View Analytics
           </Button>
 
           {/* Secondary: Done */}

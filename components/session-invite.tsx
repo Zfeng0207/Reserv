@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Sun,
   Moon,
+  ArrowLeft,
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -149,6 +150,32 @@ export function SessionInvite({
   const [actualSessionId, setActualSessionId] = useState<string | undefined>(sessionId) // Store actual session ID (may be updated after creation)
   const [scrolled, setScrolled] = useState(false)
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
+  
+  // Sync initialEditMode prop changes - CRITICAL: if initialEditMode is true, we MUST render editor
+  // BUT: Never override edit mode if initialEditMode is explicitly true (forceEditMode)
+  useEffect(() => {
+    if (initialEditMode !== undefined && initialEditMode === true) {
+      // If initialEditMode is true, always set edit mode to true (force)
+      setIsEditMode(true)
+    } else if (initialEditMode !== undefined) {
+      // Only sync when initialEditMode is explicitly false
+      setIsEditMode(initialEditMode)
+    }
+  }, [initialEditMode])
+  
+  // Sync initialPreviewMode prop changes
+  useEffect(() => {
+    if (initialPreviewMode !== undefined) {
+      setIsPreviewMode(initialPreviewMode)
+    }
+  }, [initialPreviewMode])
+  
+  // Sync initialIsPublished prop changes
+  useEffect(() => {
+    if (initialIsPublished !== undefined) {
+      setIsPublished(initialIsPublished)
+    }
+  }, [initialIsPublished])
   
   // Sync sessionStatus when initialSessionStatus prop changes
   useEffect(() => {
@@ -1077,7 +1104,7 @@ export function SessionInvite({
     return { ok: false as const, missing }
   }
 
-  // Handle publish with auth gating
+  // Handle publish/update with auth gating
   const handlePublish = async () => {
     // Validate required fields first
     const validation = validateBeforePublish()
@@ -1092,16 +1119,28 @@ export function SessionInvite({
       return
     }
 
-    // User is authenticated, proceed with publish
+    // Check if session is live (status === "open")
+    const isLive = sessionStatus === "open"
+    
+    // User is authenticated, proceed with publish/update
     try {
       // Extract session ID from pathname (could be /host/sessions/[id]/edit) or use sessionId prop
-      let publishSessionId: string | undefined = sessionId
+      let publishSessionId: string | undefined = sessionId || actualSessionId
       if (!publishSessionId && pathname.includes("/host/sessions/")) {
         const parts = pathname.split("/")
         const sessionsIndex = parts.indexOf("sessions")
         if (sessionsIndex >= 0 && parts[sessionsIndex + 1]) {
           publishSessionId = parts[sessionsIndex + 1]
         }
+      }
+
+      if (!publishSessionId && isLive) {
+        toast({
+          title: "Update failed",
+          description: "Session ID is missing.",
+          variant: "destructive",
+        })
+        return
       }
 
       // Get host name for slug generation
@@ -1141,10 +1180,7 @@ export function SessionInvite({
         }
       }
 
-      // Call publish server action (creates session if needed, then publishes)
-      const { publishSession } = await import("@/app/host/sessions/[id]/actions")
-      const result = await publishSession({
-        sessionId: publishSessionId || null, // Pass null if "new" or doesn't exist
+      const sessionData = {
         title: eventTitle,
         startAt,
         endAt,
@@ -1154,43 +1190,101 @@ export function SessionInvite({
         sport: sportEnum,
         description: eventDescription || null,
         coverUrl: optimisticCoverUrl || null,
-      })
-
-      if (!result.ok) {
-        toast({
-          title: "Publish failed",
-          description: result.error || "Failed to publish session. Please try again.",
-          variant: "destructive",
-        })
-        return
       }
 
-      // Generate invite link using new format: /{hostSlug}/{code}
-      const inviteLink = `${window.location.origin}/${result.hostSlug}/${result.publicCode}`
-      
-      // Set published URL first
-      setPublishedUrl(inviteLink)
-      setPublishedHostSlug(result.hostSlug)
-      setPublishedCode(result.publicCode)
-      
-      // Update actualSessionId if session was created
-      if (result.sessionId) {
-        setActualSessionId(result.sessionId)
-        // Store in sessionStorage so we can navigate after share sheet closes
-        if (typeof window !== "undefined" && result.sessionId !== sessionId) {
-          sessionStorage.setItem("pending_navigate_to_session", result.sessionId)
+      let result: { ok: boolean; publicCode?: string; hostSlug?: string; sessionId?: string; error?: string }
+      let inviteLink: string
+
+      if (isLive && publishSessionId) {
+        // Update existing live session (doesn't change status)
+        const { updateLiveSession } = await import("@/app/host/sessions/[id]/actions")
+        result = await updateLiveSession(publishSessionId, sessionData)
+        
+        if (!result.ok) {
+          toast({
+            title: "Update failed",
+            description: result.error || "Failed to update session. Please try again.",
+            variant: "destructive",
+          })
+          return
         }
+
+        // Generate invite link using existing public_code
+        inviteLink = `${window.location.origin}/${result.hostSlug}/${result.publicCode}`
+        
+        // Copy to clipboard
+        if (typeof window !== "undefined" && navigator.clipboard) {
+          navigator.clipboard.writeText(inviteLink)
+        }
+
+        toast({
+          title: "Invite successfully updated",
+          description: "Your changes have been saved.",
+          variant: "default",
+        })
+
+        // Navigate to analytics page (same route as edit, but shows analytics view when isPublished=true)
+        if (publishSessionId) {
+          router.push(`/host/sessions/${publishSessionId}/edit`)
+          router.refresh()
+        } else {
+          router.refresh()
+        }
+        return
+      } else {
+        // Publish new session or draft (sets status to 'open')
+        const { publishSession } = await import("@/app/host/sessions/[id]/actions")
+        result = await publishSession({
+          sessionId: publishSessionId || null, // Pass null if "new" or doesn't exist
+          ...sessionData,
+        })
+
+        if (!result.ok) {
+          toast({
+            title: "Publish failed",
+            description: result.error || "Failed to publish session. Please try again.",
+            variant: "destructive",
+          })
+          return
+        }
+
+        // Generate invite link using new format: /{hostSlug}/{code}
+        if (!result.hostSlug || !result.publicCode) {
+          toast({
+            title: "Publish failed",
+            description: "Failed to generate invite link.",
+            variant: "destructive",
+          })
+          return
+        }
+        
+        inviteLink = `${window.location.origin}/${result.hostSlug}/${result.publicCode}`
+        
+        // Set published URL first
+        setPublishedUrl(inviteLink)
+        setPublishedHostSlug(result.hostSlug)
+        setPublishedCode(result.publicCode)
+        
+        // Update actualSessionId if session was created
+        if (result.sessionId) {
+          setActualSessionId(result.sessionId)
+          // Store in sessionStorage so we can navigate after share sheet closes
+          if (typeof window !== "undefined" && result.sessionId !== sessionId) {
+            sessionStorage.setItem("pending_navigate_to_session", result.sessionId)
+          }
+        }
+
+        // Open share sheet immediately (don't navigate yet - navigation will happen after sheet closes)
+        setPublishShareSheetOpen(true)
+
+        // Don't switch to analytics view yet - wait for user to close the share sheet
       }
-
-      // Open share sheet immediately (don't navigate yet - navigation will happen after sheet closes)
-      setPublishShareSheetOpen(true)
-
-      // Don't switch to analytics view yet - wait for user to close the share sheet
     } catch (error: any) {
       console.error("[handlePublish] Error:", error)
+      const actionLabel = sessionStatus === "open" ? "Update" : "Publish"
       toast({
-        title: "Publish failed",
-        description: error?.message || "Failed to publish session. Please try again.",
+        title: `${actionLabel} failed`,
+        description: error?.message || `Failed to ${actionLabel.toLowerCase()} session. Please try again.`,
         variant: "destructive",
       })
     }
@@ -1564,10 +1658,30 @@ export function SessionInvite({
   const inputBorder = uiMode === "dark" ? "border-white/10" : "border-black/10"
   const inputPlaceholder = uiMode === "dark" ? "placeholder:text-white/40" : "placeholder:text-black/40"
 
+  // HARD RULE: If initialEditMode is true (forceEditMode), ALWAYS render editor, never analytics
+  // This ensures that when ?mode=edit is in URL, editor renders unconditionally
+  // Use initialEditMode as PRIMARY source of truth (prop), fallback to state for backward compatibility
+  // initialEditMode prop takes precedence because it comes directly from server/route and can't be out of sync
+  const mustRenderEditor = initialEditMode === true ? true : (isEditMode === true)
+  
+  // Debug logging to diagnose render gate
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[SessionInvite] Render gate check:', {
+      initialEditMode,
+      isEditMode,
+      mustRenderEditor,
+      isPublished,
+      actualSessionId,
+      demoMode,
+      publishShareSheetOpen,
+      willRenderAnalytics: isPublished && actualSessionId && !demoMode && !publishShareSheetOpen && !mustRenderEditor
+    })
+  }
+
   // If published, show analytics view instead of edit/preview
   // But don't show analytics if share sheet is open (let user see the share sheet first)
-  // Or if edit mode is explicitly requested (via ?mode=edit query param)
-  if (isPublished && actualSessionId && !demoMode && !publishShareSheetOpen && !isEditMode) {
+  // Or if edit mode is explicitly requested (via ?mode=edit query param or initialEditMode prop)
+  if (isPublished && actualSessionId && !demoMode && !publishShareSheetOpen && !mustRenderEditor) {
     return (
       <div className="min-h-screen sporty-bg">
         <TopNav showCreateNow={false} />
@@ -1592,7 +1706,7 @@ export function SessionInvite({
               onEdit={
                 actualSessionId
                   ? () => {
-                      router.push(`/host/sessions/${actualSessionId}/edit?mode=edit`)
+                      router.push(`/host/sessions/${actualSessionId}/edit?mode=edit&from=analytics`)
                     }
                   : undefined
               }
@@ -1622,6 +1736,25 @@ export function SessionInvite({
     >
       {/* Top Navigation - show in edit mode or demo mode */}
       <TopNav showCreateNow={false} />
+
+      {/* Back to Analytics Button - only show if from analytics and session is live */}
+      {isEditMode && !isPreviewMode && sessionStatus === "open" && searchParams.get("from") === "analytics" && actualSessionId && (
+        <div className="fixed top-16 left-4 z-50">
+          <Button
+            onClick={() => router.push(`/host/sessions/${actualSessionId}/edit`)}
+            variant="outline"
+            className={cn(
+              "rounded-full h-10 px-4 gap-2 backdrop-blur-xl border shadow-lg",
+              uiMode === "dark"
+                ? "bg-black/40 border-white/20 text-white hover:bg-black/60"
+                : "bg-white/80 border-black/20 text-black hover:bg-white"
+            )}
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span className="text-sm font-medium">Back to analytics</span>
+          </Button>
+        </div>
+      )}
 
       {effects.grain && (
         <div className="fixed inset-0 pointer-events-none z-[100] opacity-[0.015] mix-blend-overlay">
@@ -2746,6 +2879,7 @@ export function SessionInvite({
           uiMode={uiMode}
           onUiModeChange={setUiMode}
           saveDraftLabel={saveDraftLabel}
+          isLive={sessionStatus === "open"}
           />
           </motion.div>
       ) : null}

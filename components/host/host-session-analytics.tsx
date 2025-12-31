@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { Ban, CheckCircle2, Clock, Calendar, DollarSign, Users, ChevronRight } from "lucide-react"
 import { formatDistanceToNow, format, isPast, isFuture, parseISO } from "date-fns"
+import { CopyInviteLinkButton } from "@/components/common/copy-invite-link-button"
 
 interface HostSessionAnalyticsProps {
   sessionId: string
@@ -195,10 +196,21 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
     <div className={cn("min-h-screen", uiMode === "dark" ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900" : "bg-white")}>
       <div className="space-y-4 p-4 pb-24">
         {/* Page Title */}
-        <div className="mb-2">
+        <div className="mb-2 flex items-center justify-between gap-3">
           <h1 className={cn("text-2xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
             Session control
           </h1>
+          <CopyInviteLinkButton
+            sessionId={sessionId}
+            variant="outline"
+            size="sm"
+            className={cn(
+              "shrink-0",
+              uiMode === "dark"
+                ? "border-white/20 bg-white/5 text-white hover:bg-white/10"
+                : "border-black/20 bg-black/5 text-black hover:bg-black/10"
+            )}
+          />
         </div>
 
         {/* SECTION 1: Session Status */}

@@ -15,7 +15,6 @@ import {
   Users,
   Upload,
   X,
-  Copy,
   ChevronRight,
   Search,
   Check,
@@ -42,6 +41,7 @@ import type { DraftData, DraftSummary } from "@/app/actions/drafts"
 import { listDrafts, saveDraft, getDraft, deleteDraft, overwriteDraft } from "@/app/actions/drafts"
 import { PublishShareSheet } from "@/components/publish-share-sheet"
 import { HostSessionAnalytics } from "@/components/host/host-session-analytics"
+import { CopyInviteLinkButton } from "@/components/common/copy-invite-link-button"
 
 // Default cover background colors by sport (when no cover image is set)
 const DEFAULT_COVER_BG: Record<string, string> = {
@@ -111,6 +111,7 @@ interface SessionInviteProps {
   onDeclineClick?: () => void // RSVP handler for public view
   initialIsPublished?: boolean // New prop to indicate if session is published
   initialSessionStatus?: "draft" | "open" | "closed" | "completed" | "cancelled" // Session status for draft update logic
+  rsvpState?: "none" | "joined" | "declined" // Current RSVP state for public view
 }
 
 export function SessionInvite({
@@ -133,6 +134,7 @@ export function SessionInvite({
   onDeclineClick,
   initialIsPublished = false,
   initialSessionStatus,
+  rsvpState = "none",
 }: SessionInviteProps) {
   console.log(`[SessionInvite] Render:`, { sessionId, initialCoverUrl, initialSport, initialEditMode, initialPreviewMode })
   
@@ -2195,28 +2197,6 @@ export function SessionInvite({
                     </motion.div>
                   </motion.div>
 
-                  {isEditMode && !isPreviewMode && (
-                    <div className="flex flex-col gap-2 pt-4">
-                      <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        transition={{ duration: 0.15 }}
-                        className={`${uiMode === "dark" ? "bg-white/10 border-white/20 text-white" : "bg-white/70 border-black/10 text-black"} backdrop-blur-sm px-4 py-3 rounded-full text-sm font-medium flex items-center justify-center gap-2`}
-                      >
-                        <Copy className="w-4 h-4" />
-                        Copy invite link
-                      </motion.button>
-                      <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        transition={{ duration: 0.15 }}
-                        className="bg-red-500/20 border border-red-500/30 text-red-100 backdrop-blur-sm px-4 py-3 rounded-full text-sm font-medium flex items-center justify-center gap-2"
-                      >
-                        <X className="w-4 h-4" />
-                        Close session
-                      </motion.button>
-                    </div>
-                  )}
                 </motion.div>
           </div>
             </motion.div>
@@ -2299,43 +2279,47 @@ export function SessionInvite({
                 <div className="flex items-center justify-between mb-4">
                   <h2 className={`text-lg font-semibold ${strongText}`}>Going</h2>
                   <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30">
-                    {(demoMode && demoParticipants.length > 0 ? demoParticipants.length : 5)} / {eventCapacity}
+                    {demoParticipants.length} / {eventCapacity}
                   </Badge>
                 </div>
-                <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2">
-                  {(demoMode && demoParticipants.length > 0
-                    ? demoParticipants
-                    : [1, 2, 3, 4, 5].map((i) => ({ name: `User ${i}`, avatar: null }))
-                  ).map((participant, i) => (
-                    <motion.div
-                      key={i}
-                      whileHover={{ scale: 1.05, y: -2 }}
-                      transition={{ duration: 0.2 }}
-                      className="flex flex-col items-center gap-2 min-w-[80px]"
-                    >
-                      <div className="relative">
-                        {participant.avatar ? (
-                          <img
-                            src={participant.avatar}
-                            alt={participant.name}
-                            className="w-16 h-16 rounded-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] p-0.5">
-                            <div className={`w-full h-full rounded-full ${uiMode === "dark" ? "bg-slate-100" : "bg-white"} flex items-center justify-center`}>
+                {demoParticipants.length === 0 ? (
+                  <p className={`text-sm ${mutedText} px-1`}>No one has joined so far.</p>
+                ) : (
+                  <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2">
+                    {demoParticipants.map((participant, i) => {
+                      const initial = (participant.name?.trim()?.[0] ?? "?").toUpperCase()
+                      return (
+                        <motion.div
+                          key={participant.name || i}
+                          whileHover={{ scale: 1.05, y: -2 }}
+                          transition={{ duration: 0.2 }}
+                          className="flex flex-col items-center gap-2 min-w-[80px]"
+                        >
+                          <div className="relative">
+                            {participant.avatar ? (
                               <img
-                                src="/profile.svg"
+                                src={participant.avatar}
                                 alt={participant.name}
-                                className="w-10 h-10 object-contain"
+                                className="w-16 h-16 rounded-full object-cover"
                               />
-                            </div>
+                            ) : (
+                              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] p-0.5">
+                                <div className={`w-full h-full rounded-full ${uiMode === "dark" ? "bg-slate-100" : "bg-white"} flex items-center justify-center border border-white/10`}>
+                                  <span className={`text-lg font-semibold ${uiMode === "dark" ? "text-black" : "text-black"}`}>
+                                    {initial}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      <span className={`text-xs ${mutedText} text-center`}>{participant.name}</span>
-                    </motion.div>
-                  ))}
-                </div>
+                          <p className={`mt-1 w-14 truncate text-center text-[11px] ${mutedText}`}>
+                            {participant.name}
+                          </p>
+                        </motion.div>
+                      )
+                    })}
+                  </div>
+                )}
               </Card>
             </motion.div>
           )}
@@ -2945,6 +2929,37 @@ export function SessionInvite({
         uiMode={uiMode}
       />
 
+      {/* Copy invite link button - Only show in host preview mode, above RSVP dock */}
+      <AnimatePresence>
+      {isPreviewMode && actualSessionId && !demoMode && (
+        <motion.div
+          key="copy-link-bar"
+          initial={{ y: 12, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 12, opacity: 0 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+          className="fixed bottom-24 left-0 right-0 z-30"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0)" }}
+        >
+          <div className="mx-auto max-w-md px-4 pb-2">
+            <div className={`${glassCard} rounded-2xl p-3 shadow-xl`}>
+              <CopyInviteLinkButton
+                sessionId={actualSessionId}
+                variant="ghost"
+                className={cn(
+                  "w-full justify-center",
+                  uiMode === "dark"
+                    ? "text-white hover:bg-white/10"
+                    : "text-black hover:bg-black/10"
+                )}
+                label="Copy invite link"
+              />
+            </div>
+          </div>
+        </motion.div>
+      )}
+      </AnimatePresence>
+
       {/* Sticky RSVP Dock - Only show in preview mode or when not in edit mode */}
       <AnimatePresence>
       {(!isEditMode || isPreviewMode) && (
@@ -2957,20 +2972,54 @@ export function SessionInvite({
           className="fixed bottom-0 left-0 right-0 z-40 pb-safe"
         >
           <div className="mx-auto max-w-md px-4 pb-4">
-            <div className={`${glassCard} rounded-2xl p-4 shadow-2xl flex gap-3`}>
-              <Button 
-                onClick={onJoinClick || undefined}
-                className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
-              >
-                Join session
-              </Button>
-              <Button
-                onClick={onDeclineClick || undefined}
-                variant="outline"
-                className={`flex-1 bg-transparent ${uiMode === "dark" ? "border-white/20 text-white hover:bg-white/10" : "border-black/20 text-black hover:bg-black/10"} rounded-full h-12`}
-              >
-                Decline
-              </Button>
+            <div className={`${glassCard} rounded-2xl p-4 shadow-2xl ${rsvpState !== "none" ? "flex flex-col gap-3" : "flex gap-3"}`}>
+              {/* Show status message if user has already RSVP'd */}
+              {rsvpState !== "none" && (
+                <div className="flex flex-col gap-1 pb-2">
+                  <p className={`text-base font-semibold ${uiMode === "dark" ? "text-white" : "text-black"}`}>
+                    {rsvpState === "joined" ? "You're in ✅" : "You're marked as not going"}
+                  </p>
+                  <p className={`text-xs ${uiMode === "dark" ? "text-white/60" : "text-black/60"}`}>
+                    {rsvpState === "joined" ? "Want to change it? You can decline anytime." : "Plans changed? You can join again."}
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex gap-3">
+                {/* Show appropriate button based on RSVP state */}
+                {rsvpState === "none" ? (
+                  <>
+                    <Button 
+                      onClick={onJoinClick || undefined}
+                      className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
+                    >
+                      Join session
+                    </Button>
+                    <Button
+                      onClick={onDeclineClick || undefined}
+                      variant="outline"
+                      className={`flex-1 bg-transparent ${uiMode === "dark" ? "border-white/20 text-white hover:bg-white/10" : "border-black/20 text-black hover:bg-black/10"} rounded-full h-12`}
+                    >
+                      Decline
+                    </Button>
+                  </>
+                ) : rsvpState === "joined" ? (
+                  <Button
+                    onClick={onDeclineClick || undefined}
+                    variant="outline"
+                    className={`flex-1 bg-transparent ${uiMode === "dark" ? "border-white/20 text-white hover:bg-white/10" : "border-black/20 text-black hover:bg-black/10"} rounded-full h-12`}
+                  >
+                    Decline instead
+                  </Button>
+                ) : (
+                  <Button 
+                    onClick={onJoinClick || undefined}
+                    className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
+                  >
+                    Join instead
+                  </Button>
+                )}
+              </div>
               {/* Light/Dark toggle for preview mode */}
               {isPreviewMode && (
                 <button

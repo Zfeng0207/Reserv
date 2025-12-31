@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { SessionInvite } from "@/components/session-invite"
 import { GuestRSVPDialog } from "./guest-rsvp-dialog"
-import { joinSession, declineSession } from "@/app/session/[id]/actions"
+import { joinSession, declineSession, getParticipantRSVPStatus } from "@/app/session/[id]/actions"
 import { useToast } from "@/hooks/use-toast"
 import { format, parseISO } from "date-fns"
 import { ArrowLeft } from "lucide-react"
@@ -75,9 +75,14 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
   const [rsvpDialogOpen, setRsvpDialogOpen] = useState(false)
   const [rsvpAction, setRsvpAction] = useState<"join" | "decline">("join")
   const [uiMode, setUiMode] = useState<"dark" | "light">("dark")
+  const [rsvpState, setRsvpState] = useState<"none" | "joined" | "declined">("none")
+  const [storedParticipantInfo, setStoredParticipantInfo] = useState<{ name: string; phone: string | null } | null>(null)
   
   // Check if user came from analytics page
   const fromAnalytics = searchParams.get("from") === "analytics"
+  
+  // Get public_code from session
+  const publicCode = (session as any).public_code
 
   // Hydrate uiMode from localStorage
   useEffect(() => {
@@ -108,15 +113,8 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
   // Sync UI mode from SessionInvite if needed (it manages its own state)
   // We'll keep this component's state for the dialog styling
 
-  const handleRSVPClick = (action: "join" | "decline") => {
-    setRsvpAction(action)
-    setRsvpDialogOpen(true)
-  }
-
-  const handleRSVPContinue = async (name: string, phone: string | null) => {
+  const handleRSVPContinue = async (name: string, phone: string | null, action?: "join" | "decline") => {
     try {
-      // Get public_code from session (it should exist if session is published)
-      const publicCode = (session as any).public_code
       if (!publicCode) {
         toast({
           title: "Error",
@@ -126,13 +124,21 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
         return
       }
 
+      // Store participant info in localStorage
+      const storageKey = `reserv_rsvp_${publicCode}`
+      localStorage.setItem(storageKey, JSON.stringify({ name, phone }))
+      setStoredParticipantInfo({ name, phone })
+
+      const isUpdating = rsvpState !== "none"
+      const actionToUse = action || rsvpAction
       let result
-      if (rsvpAction === "join") {
+      if (actionToUse === "join") {
         result = await joinSession(publicCode, name, phone)
         if (result.ok) {
+          setRsvpState("joined")
           toast({
-            title: "You're in!",
-            description: "You've successfully joined this session.",
+            title: isUpdating ? "Updated your RSVP" : "You're in!",
+            description: isUpdating ? "You've joined this session." : "You've successfully joined this session.",
             variant: "success",
           })
           // Refresh the page to show updated participant list
@@ -155,11 +161,13 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
       } else {
         result = await declineSession(publicCode, name, phone)
         if (result.ok) {
+          setRsvpState("declined")
           toast({
-            title: "Declined",
-            description: "You've declined this session invitation.",
+            title: isUpdating ? "Updated your RSVP" : "Declined",
+            description: isUpdating ? "You've declined this session." : "You've declined this session invitation.",
             variant: "success",
           })
+          router.refresh()
         } else {
           toast({
             title: "Failed to decline",
@@ -175,6 +183,23 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
         variant: "destructive",
       })
     }
+  }
+
+  // Handle RSVP click - if already RSVP'd, switch action to opposite
+  const handleRSVPClick = (action: "join" | "decline") => {
+    // If user has already RSVP'd and clicking the same action, do nothing
+    if (rsvpState === "joined" && action === "join") return
+    if (rsvpState === "declined" && action === "decline") return
+
+    // If user already RSVP'd, use stored info (no need for dialog - directly update)
+    if (storedParticipantInfo && rsvpState !== "none") {
+      handleRSVPContinue(storedParticipantInfo.name, storedParticipantInfo.phone, action)
+      return
+    }
+
+    // First time RSVP - show dialog
+    setRsvpAction(action)
+    setRsvpDialogOpen(true)
   }
 
   const handleBackToAnalytics = () => {
@@ -219,6 +244,7 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
         demoParticipants={demoParticipants}
         onJoinClick={() => handleRSVPClick("join")}
         onDeclineClick={() => handleRSVPClick("decline")}
+        rsvpState={rsvpState}
       />
 
       {/* RSVP Dialog */}

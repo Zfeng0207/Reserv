@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation"
 import { Suspense } from "react"
 import { PublicSessionView } from "@/components/session/public-session-view"
 import { toSlug } from "@/lib/utils/slug"
+import { getUser } from "@/lib/supabase/server/server"
 
 // Force dynamic rendering to always fetch latest data
 export const dynamic = "force-dynamic"
@@ -16,16 +17,29 @@ async function PublicInviteContent({
 }) {
   const supabase = await createClient()
 
+  // Check if user is authenticated and if they are the host
+  const user = await getUser(supabase)
+
   // Lookup session by public_code (code is the source of truth)
+  // RLS will allow access if user is host OR if session is open
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
     .select("*")
     .eq("public_code", code)
-    .eq("status", "open")
     .single()
 
   if (sessionError || !session) {
     console.error(`[PublicInvitePage] Error fetching session by code (${code}):`, sessionError)
+    notFound()
+  }
+
+  // If user is authenticated and is the host, redirect to analytics page
+  if (user && session.host_id === user.id) {
+    redirect(`/host/sessions/${session.id}/edit`)
+  }
+
+  // Only show open sessions to public (non-host users)
+  if (session.status !== "open") {
     notFound()
   }
 

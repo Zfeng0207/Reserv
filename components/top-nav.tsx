@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { UserCircle, LogOut, Radio } from "lucide-react"
+import { UserCircle, LogOut, Radio, Plus } from "lucide-react"
 import { motion } from "framer-motion"
 import { useAuth } from "@/lib/hooks/use-auth"
 import { Button } from "@/components/ui/button"
@@ -181,6 +181,13 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
                     Profile
                   </DropdownMenuItem>
                     <DropdownMenuSeparator className="bg-gray-200 dark:bg-white/10" />
+                    <DropdownMenuItem
+                      onClick={() => router.push("/host/sessions/new/edit")}
+                      className="text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer focus:bg-gray-100 dark:focus:bg-white/10"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Create session
+                    </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={handleLiveInvitesClick}
                       className="text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer focus:bg-gray-100 dark:focus:bg-white/10"

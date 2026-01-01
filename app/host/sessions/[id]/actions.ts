@@ -225,6 +225,9 @@ export async function getSessionAnalytics(sessionId: string): Promise<
         collected: number
         total: number
         paidCount: number
+        receivedCount: number // pending_review + approved
+        pendingCount: number // pending_review only
+        confirmedCount: number // approved only
       }
       acceptedList: Array<{ id: string; display_name: string; created_at: string }>
       declinedList: Array<{ id: string; display_name: string; created_at: string }>
@@ -294,18 +297,31 @@ export async function getSessionAnalytics(sessionId: string): Promise<
         created_at: p.created_at,
       })) || []
 
-  // Get payment data (sum of approved payment proofs)
-  // Note: We'll need to check if there's a price field in sessions or calculate from payment_proofs
-  const { data: paymentProofs, error: paymentError } = await supabase
+  // Get payment data from payment_proofs table
+  // Schema: payment_proofs table with payment_status enum: "pending_review" | "approved" | "rejected"
+  // Count all payment proofs (pending_review + approved = received)
+  const { data: allPaymentProofs, error: paymentError } = await supabase
+    .from("payment_proofs")
+    .select("amount, payment_status")
+    .eq("session_id", sessionId)
+    .in("payment_status", ["pending_review", "approved"])
+
+  // Get approved payment proofs for collected amount
+  const { data: approvedPaymentProofs } = await supabase
     .from("payment_proofs")
     .select("amount, payment_status")
     .eq("session_id", sessionId)
     .eq("payment_status", "approved")
 
-  // For now, use amount from payment proofs. If sessions table has price field, use that instead
+  // Calculate payment counts
+  const receivedCount = allPaymentProofs?.length || 0
+  const pendingCount = allPaymentProofs?.filter((p) => p.payment_status === "pending_review").length || 0
+  const confirmedCount = allPaymentProofs?.filter((p) => p.payment_status === "approved").length || 0
+  
+  // Legacy fields (for backward compatibility)
   const pricePerPerson = null // TODO: Get from sessions table if it has price field
-  const paidCount = paymentProofs?.length || 0
-  const collected = paymentProofs?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0
+  const paidCount = confirmedCount // approved = paid
+  const collected = approvedPaymentProofs?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0
   const total = pricePerPerson ? pricePerPerson * accepted : 0
 
   return {
@@ -320,6 +336,9 @@ export async function getSessionAnalytics(sessionId: string): Promise<
       collected,
       total,
       paidCount,
+      receivedCount,
+      pendingCount,
+      confirmedCount,
     },
     acceptedList,
     declinedList,

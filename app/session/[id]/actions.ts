@@ -1,6 +1,6 @@
 "use server"
 
-import { createClient } from "@/lib/supabase/server/server"
+import { createClient, createAdminClient } from "@/lib/supabase/server/server"
 import { revalidatePath } from "next/cache"
 
 /**
@@ -272,5 +272,131 @@ export async function getSessionParticipants(publicCode: string): Promise<
   }
 
   return { ok: true, participants: data || [] }
+}
+
+/**
+ * Submit payment proof for a session participant
+ * Uploads file to Supabase Storage and creates payment_proofs record
+ */
+export async function submitPaymentProof(
+  sessionId: string,
+  displayName: string,
+  phone: string | null,
+  fileData: string, // Base64 encoded image data
+  fileName: string
+): Promise<{ ok: true; paymentProofId: string } | { ok: false; error: string }> {
+  const supabase = await createClient()
+
+  // Verify session exists and is open
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .select("id, status")
+    .eq("id", sessionId)
+    .eq("status", "open")
+    .single()
+
+  if (sessionError || !session) {
+    return { ok: false, error: "Session not found or not available" }
+  }
+
+  // Find participant by session_id, display_name, and phone
+  const trimmedName = displayName.trim()
+  const trimmedPhone = phone?.trim() || null
+
+  let participantQuery = supabase
+    .from("participants")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("display_name", trimmedName)
+
+  if (trimmedPhone) {
+    participantQuery = participantQuery.eq("contact_phone", trimmedPhone)
+  } else {
+    participantQuery = participantQuery.is("contact_phone", null)
+  }
+
+  const { data: participant, error: participantError } = await participantQuery.single()
+
+  if (participantError || !participant) {
+    return { ok: false, error: "Participant not found. Please join the session first." }
+  }
+
+  try {
+    // Convert base64 to buffer
+    const base64Data = fileData.split(",")[1] || fileData // Remove data:image/... prefix if present
+    const buffer = Buffer.from(base64Data, "base64")
+
+    // Generate unique file path
+    const fileExt = fileName.split(".").pop() || "jpg"
+    // Normalize file extension for content type
+    const normalizedExt = fileExt.toLowerCase() === "jpg" || fileExt.toLowerCase() === "jpeg" ? "jpeg" : fileExt.toLowerCase()
+    const filePath = `payment-proofs/${sessionId}/${participant.id}/${Date.now()}.${fileExt}`
+
+    // Use admin client for storage upload (bypasses RLS, but we've already validated participant on server)
+    const adminClient = createAdminClient()
+    
+    // Upload to Supabase Storage (using payment-proofs bucket)
+    const { data: uploadData, error: uploadError } = await adminClient.storage
+      .from("payment-proofs")
+      .upload(filePath, buffer, {
+        contentType: `image/${normalizedExt}`,
+        upsert: false,
+        cacheControl: "3600",
+      })
+
+    if (uploadError) {
+      console.error("[submitPaymentProof] Storage upload error:", {
+        message: uploadError.message,
+        name: uploadError.name,
+      })
+      
+      // Provide more helpful error messages
+      const errorMessage = uploadError.message || ""
+      if (errorMessage.includes("not found") || errorMessage.includes("Bucket")) {
+        return { ok: false, error: "Storage bucket not configured. Please contact support." }
+      }
+      if (errorMessage.includes("permission") || errorMessage.includes("denied")) {
+        return { ok: false, error: "Permission denied. Please try again." }
+      }
+      if (errorMessage.includes("size") || errorMessage.includes("too large")) {
+        return { ok: false, error: "Image is too large. Please use a smaller file." }
+      }
+      
+      return { ok: false, error: `Failed to upload image: ${errorMessage || "Please try again."}` }
+    }
+
+    // Get public URL using admin client
+    const { data: urlData } = adminClient.storage.from("payment-proofs").getPublicUrl(filePath)
+    const publicUrl = urlData.publicUrl
+
+    // Insert payment_proofs record using admin client (bypasses RLS, but we've validated participant exists)
+    const { data: proofData, error: insertError } = await adminClient
+      .from("payment_proofs")
+      .insert({
+        session_id: sessionId,
+        participant_id: participant.id,
+        proof_image_url: publicUrl,
+        payment_status: "pending_review",
+        ocr_status: "pending",
+      })
+      .select("id")
+      .single()
+
+    if (insertError) {
+      console.error("[submitPaymentProof] DB insert error:", insertError)
+      // Try to clean up uploaded file using admin client
+      const adminClient = createAdminClient()
+      await adminClient.storage.from("payment-proofs").remove([filePath])
+      return { ok: false, error: "Failed to save payment proof. Please try again." }
+    }
+
+    // Revalidate session page
+    revalidatePath(`/session/${sessionId}`)
+
+    return { ok: true, paymentProofId: proofData.id }
+  } catch (error: any) {
+    console.error("[submitPaymentProof] Error:", error)
+    return { ok: false, error: error?.message || "Failed to submit payment proof. Please try again." }
+  }
 }
 

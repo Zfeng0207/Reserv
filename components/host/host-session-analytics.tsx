@@ -33,6 +33,9 @@ interface AnalyticsData {
     collected: number
     total: number
     paidCount: number
+    receivedCount: number // pending_review + approved
+    pendingCount: number // pending_review only
+    confirmedCount: number // approved only
   }
   acceptedList: Array<{ id: string; display_name: string; created_at: string }>
   declinedList: Array<{ id: string; display_name: string; created_at: string }>
@@ -212,7 +215,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
 
   return (
     <div className={cn("min-h-screen", uiMode === "dark" ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900" : "bg-white")}>
-      <div className="space-y-4 p-4 pb-24">
+      <div className="space-y-4 p-4 pb-[200px]">
         {/* Page Title */}
         <div className="mb-2 flex items-center justify-between gap-3">
           <h1 className={cn("text-2xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
@@ -332,33 +335,75 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
           transition={{ duration: 0.4, delay: 0.2 }}
         >
           <Card className={cn("p-4", glassCard)}>
-            <div className="flex items-center justify-between">
+            <div className="space-y-3">
               <div>
-                <h3 className={cn("text-sm font-semibold mb-1", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+                <h3 className={cn("text-sm font-medium mb-2", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
                   Payments
                 </h3>
-                <p className={cn("text-xs", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
-                  {analytics.payments.total === 0 || !analytics.pricePerPerson
-                    ? "No payments yet"
-                    : `RM ${analytics.payments.collected.toFixed(0)} collected · ${analytics.payments.paidCount < analytics.attendance.accepted ? analytics.attendance.accepted - analytics.payments.paidCount : 0} pending`}
-                </p>
+                {/* Dynamic payment status display */}
+                {analytics.attendance.accepted === 0 ? (
+                  <div className="space-y-1">
+                    <p className={cn("text-xs", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+                      No attendees yet
+                    </p>
+                    <p className={cn("text-xs", uiMode === "dark" ? "text-white/40" : "text-black/40")}>
+                      Payments will appear when someone joins.
+                    </p>
+                  </div>
+                ) : analytics.payments.receivedCount === 0 ? (
+                  <p className={cn("text-base font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
+                    <span className={cn(uiMode === "dark" ? "text-white" : "text-black")}>0 / {analytics.attendance.accepted}</span>
+                    <span className={cn("ml-1", uiMode === "dark" ? "text-white/80" : "text-black/80")}>payments received</span>
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {/* Primary status line - emphasized */}
+                    <p className={cn("text-base font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
+                      <span className={cn(uiMode === "dark" ? "text-white" : "text-black")}>
+                        {analytics.payments.receivedCount} / {analytics.attendance.accepted}
+                      </span>
+                      <span className={cn("ml-1", uiMode === "dark" ? "text-white/80" : "text-black/80")}>
+                        payment{analytics.payments.receivedCount === 1 ? "" : "s"} received
+                      </span>
+                    </p>
+                    {/* Breakdown section */}
+                    <div className={cn("pt-2 border-t", uiMode === "dark" ? "border-white/10" : "border-black/10")}>
+                      <p className={cn("text-xs uppercase tracking-wide mb-2", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+                        Payments status
+                      </p>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className={cn("w-3.5 h-3.5 flex-shrink-0", uiMode === "dark" ? "text-emerald-400/80" : "text-emerald-600")} />
+                          <p className={cn("text-sm", uiMode === "dark" ? "text-white/80" : "text-black/80")}>
+                            <span className={cn(uiMode === "dark" ? "text-white" : "text-black")}>{analytics.payments.confirmedCount}</span>
+                            <span className="ml-1">confirmed</span>
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Clock className={cn("w-3.5 h-3.5 flex-shrink-0", uiMode === "dark" ? "text-amber-400/80" : "text-amber-600")} />
+                          <p className={cn("text-sm", uiMode === "dark" ? "text-white/80" : "text-black/80")}>
+                            <span className={cn(uiMode === "dark" ? "text-white" : "text-black")}>{analytics.payments.pendingCount}</span>
+                            <span className="ml-1">pending review</span>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-              {analytics.payments.total > 0 && (
-                <Button
-                  onClick={() => router.push(`/host/sessions/${sessionId}/edit?mode=payments`)}
-                  variant="outline"
-                  size="sm"
-                  className={cn(
-                    "rounded-full",
-                    uiMode === "dark"
-                      ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
-                      : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
-                  )}
-                >
-                  View payment uploads
-                  <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              )}
+              <Button
+                onClick={() => router.push(`/host/sessions/${sessionId}/edit?mode=payments`)}
+                variant="outline"
+                className={cn(
+                  "w-full rounded-full h-11 mt-1",
+                  uiMode === "dark"
+                    ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
+                    : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
+                )}
+              >
+                View payment uploads
+                <ChevronRight className="w-4 h-4 ml-2" />
+              </Button>
             </div>
           </Card>
         </motion.div>
@@ -429,21 +474,6 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
                   }
                 />
               </div>
-
-              {/* Close session button */}
-              <Button
-                onClick={() => setUnpublishDialogOpen(true)}
-                variant="outline"
-                className={cn(
-                  "w-full mt-4 rounded-full h-11",
-                  uiMode === "dark"
-                    ? "border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400"
-                    : "border-red-300 bg-red-50 hover:bg-red-100 text-red-600"
-                )}
-              >
-                <Ban className="w-4 h-4 mr-2" />
-                Close session
-              </Button>
             </div>
           </Card>
         </motion.div>

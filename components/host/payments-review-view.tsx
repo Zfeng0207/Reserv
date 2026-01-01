@@ -178,7 +178,7 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
   }
 
   return (
-    <div className={cn("min-h-screen pb-24", uiMode === "dark" ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900" : "bg-white")}>
+    <div className={cn("min-h-screen pb-[200px]", uiMode === "dark" ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900" : "bg-white")}>
       <div className="p-4 space-y-4">
         {/* Header */}
         <div className="flex items-center gap-4">

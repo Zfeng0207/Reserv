@@ -23,6 +23,7 @@ import {
   Sun,
   Moon,
   ArrowLeft,
+  Sparkles,
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -152,6 +153,37 @@ export function SessionInvite({
   const [actualSessionId, setActualSessionId] = useState<string | undefined>(sessionId) // Store actual session ID (may be updated after creation)
   const [scrolled, setScrolled] = useState(false)
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
+  
+  // Celebration animation state for joined state
+  const [shouldCelebrate, setShouldCelebrate] = useState(false)
+  const prevRsvpStateRef = useRef<"none" | "joined" | "declined">(rsvpState)
+  
+  // Detect join transition and trigger celebration (only once, not on preview mode)
+  useEffect(() => {
+    if (isPreviewMode) {
+      setShouldCelebrate(false)
+      prevRsvpStateRef.current = rsvpState
+      return
+    }
+    
+    const prev = prevRsvpStateRef.current
+    const isJoined = rsvpState === "joined"
+    const wasJoined = prev === "joined"
+    
+    // Trigger celebration when transitioning from non-joined to joined
+    if (!wasJoined && isJoined) {
+      // Check for reduced motion preference
+      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      if (!prefersReducedMotion) {
+        setShouldCelebrate(true)
+        // Auto-hide after animation completes
+        const timer = setTimeout(() => setShouldCelebrate(false), 600)
+        return () => clearTimeout(timer)
+      }
+    }
+    
+    prevRsvpStateRef.current = rsvpState
+  }, [rsvpState, isPreviewMode])
   
   // Sync initialEditMode prop changes - CRITICAL: if initialEditMode is true, we MUST render editor
   // BUT: Never override edit mode if initialEditMode is explicitly true (forceEditMode)
@@ -573,6 +605,9 @@ export function SessionInvite({
   const [paymentNotes, setPaymentNotes] = useState("")
   const [paymentQrImage, setPaymentQrImage] = useState<string | null>(null)
   const [proofImage, setProofImage] = useState<string | null>(null) // For payment proof in preview mode
+  const [proofImageFile, setProofImageFile] = useState<File | null>(null) // Store actual File object for upload
+  const [isSubmittingProof, setIsSubmittingProof] = useState(false)
+  const [proofSubmitted, setProofSubmitted] = useState(false)
 
   const [theme, setTheme] = useState("badminton")
   const [effects, setEffects] = useState({
@@ -906,16 +941,139 @@ export function SessionInvite({
   const handleProofImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      // Store the File object for submission
+      setProofImageFile(file)
+      // Create preview
       const reader = new FileReader()
       reader.onloadend = () => {
         setProofImage(reader.result as string)
-        toast({
-          title: "Image uploaded",
-          description: "Payment proof has been uploaded.",
-          variant: "success",
-        })
       }
       reader.readAsDataURL(file)
+    }
+  }
+
+  // Check localStorage for submitted payment proof
+  useEffect(() => {
+    if (typeof window !== "undefined" && actualSessionId) {
+      const cacheKey = `sl:paymentSubmitted:${actualSessionId}`
+      const cached = localStorage.getItem(cacheKey)
+      if (cached === "true") {
+        setProofSubmitted(true)
+      }
+    }
+  }, [actualSessionId])
+
+  const handleSubmitPaymentProof = async () => {
+    if (!proofImageFile || !actualSessionId) return
+
+    // Get participant info from localStorage
+    if (typeof window === "undefined") return
+
+    // Try to get participant info from localStorage
+    // The key format is: `reserv_rsvp_${publicCode}` from public-session-view.tsx
+    // Also try sessionId-based key as fallback
+    const storageKeys = Object.keys(localStorage)
+    let participantInfo: { name: string; phone: string | null } | null = null
+
+    // First try: look for sessionId-based key
+    const sessionKey = `reserv_rsvp_session_${actualSessionId}`
+    const sessionData = localStorage.getItem(sessionKey)
+    if (sessionData) {
+      try {
+        const data = JSON.parse(sessionData)
+        if (data.name) {
+          participantInfo = { name: data.name, phone: data.phone || null }
+        }
+      } catch (e) {
+        // Ignore invalid JSON
+      }
+    }
+
+    // Second try: look for any reserv_rsvp_ key (for backward compatibility with publicCode-based storage)
+    if (!participantInfo) {
+      for (const key of storageKeys) {
+        if (key.startsWith("reserv_rsvp_") && !key.includes("session_")) {
+          try {
+            const data = JSON.parse(localStorage.getItem(key) || "{}")
+            if (data.name) {
+              participantInfo = { name: data.name, phone: data.phone || null }
+              // Also store with sessionId for future use
+              localStorage.setItem(sessionKey, JSON.stringify(participantInfo))
+              break
+            }
+          } catch (e) {
+            // Ignore invalid JSON
+          }
+        }
+      }
+    }
+
+    if (!participantInfo?.name) {
+      toast({
+        title: "Please join the session first",
+        description: "You need to join the session before submitting payment proof.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsSubmittingProof(true)
+
+    try {
+      // Convert file to base64
+      const reader = new FileReader()
+      reader.readAsDataURL(proofImageFile)
+      reader.onloadend = async () => {
+        const base64Data = reader.result as string
+
+        const { submitPaymentProof } = await import("@/app/session/[id]/actions")
+        const result = await submitPaymentProof(
+          actualSessionId,
+          participantInfo.name,
+          participantInfo.phone,
+          base64Data,
+          proofImageFile.name
+        )
+
+        if (result.ok) {
+          // Mark as submitted
+          setProofSubmitted(true)
+          const cacheKey = `sl:paymentSubmitted:${actualSessionId}`
+          localStorage.setItem(cacheKey, "true")
+
+          toast({
+            title: "Payment proof submitted",
+            description: "Your payment proof has been submitted for review.",
+            variant: "success",
+          })
+
+          // Clear file and preview
+          setProofImageFile(null)
+          setProofImage(null)
+        } else {
+          toast({
+            title: "Failed to submit payment proof",
+            description: result.error,
+            variant: "destructive",
+          })
+        }
+        setIsSubmittingProof(false)
+      }
+      reader.onerror = () => {
+        toast({
+          title: "Error reading file",
+          description: "Please try again.",
+          variant: "destructive",
+        })
+        setIsSubmittingProof(false)
+      }
+    } catch (error: any) {
+      toast({
+        title: "Failed to submit payment proof",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      })
+      setIsSubmittingProof(false)
     }
   }
 
@@ -1908,7 +2066,7 @@ export function SessionInvite({
             )}
           >
             <ChevronRight className="w-4 h-4" />
-            <span className="text-sm font-medium">Go to Analytics</span>
+            <span className="text-sm font-medium">Go to Session Control</span>
           </Button>
         </div>
       )}
@@ -1984,7 +2142,7 @@ export function SessionInvite({
             <motion.div
               layout
               transition={{ duration: 0.22, ease: "easeOut" }}
-              className={`relative z-10 flex flex-col min-h-[85vh] px-6 pb-8 text-white ${
+              className={`relative z-10 flex flex-col min-h-[85vh] px-6 pb-[200px] text-white ${
                 isEditMode && !isPreviewMode ? "pt-16" : "pt-24"
               }`}
             >
@@ -2311,7 +2469,7 @@ export function SessionInvite({
           <motion.div
             layout
             transition={{ duration: 0.22, ease: "easeOut" }}
-            className="px-6 pt-8 pb-32 space-y-4"
+            className="px-6 pt-8 pb-[200px] space-y-4"
           >
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -2577,7 +2735,7 @@ export function SessionInvite({
             </motion.div>
           )}
 
-          {(!isEditMode || isPreviewMode) && (
+          {(!isEditMode || isPreviewMode) && actualSessionId && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -2585,34 +2743,83 @@ export function SessionInvite({
             >
               <Card className={`${glassCard} p-6`}>
                 <h2 className={`text-lg font-semibold ${strongText} mb-2`}>Upload payment proof</h2>
-                <p className={`text-sm ${mutedText} mb-4`}>
-                  Please upload your payment confirmation to secure your spot.
-                </p>
-                {proofImage ? (
-                  <div className="relative">
-                    <img src={proofImage || "/placeholder.svg"} alt="Payment proof" className="w-full rounded-lg" />
-                    <button
-                      onClick={() => setProofImage(null)}
-                      className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-2"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                {proofSubmitted ? (
+                  <div className="text-center py-6">
+                    <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-500/20 mb-3">
+                      <Check className="w-6 h-6 text-green-500" />
+                    </div>
+                    <p className={`text-sm font-medium ${strongText} mb-1`}>Payment proof submitted</p>
+                    <p className={`text-xs ${mutedText}`}>Your payment proof is being reviewed by the host.</p>
                   </div>
                 ) : (
-                  <label className={`border-2 border-dashed rounded-lg p-8 text-center hover:border-[var(--theme-accent)]/50 transition-colors cursor-pointer block ${
-                    uiMode === "dark" ? "border-white/20" : "border-black/30"
-                  }`}>
-                    <input type="file" accept="image/*" onChange={handleProofImageUpload} className="hidden" />
-                    <Upload className={`w-8 h-8 mx-auto mb-2 ${
-                      uiMode === "dark" ? "text-white/40" : "text-black/50"
-                    }`} />
-                    <p className={`text-sm ${
-                      uiMode === "dark" ? "text-white/60" : "text-black/70"
-                    }`}>Click to upload or drag and drop</p>
-                    <p className={`text-xs mt-1 ${
-                      uiMode === "dark" ? "text-white/40" : "text-black/50"
-                    }`}>Screenshot or photo</p>
-                  </label>
+                  <>
+                    {/* Determine if payment upload should be enabled */}
+                    {/* Allow upload if: public participant view AND (user has joined OR not yet joined - allow flexibility) */}
+                    {(() => {
+                      const isPublicParticipantView = !isEditMode && !!onJoinClick
+                      const isHostPreview = isPreviewMode && !onJoinClick
+                      // Allow upload for public participants (not host preview) - enabled after joining, but also allow before joining for flexibility
+                      const canUploadPaymentProof = isPublicParticipantView && !isHostPreview
+                      
+                      return (
+                        <>
+                          <p className={`text-sm ${mutedText} mb-4`}>
+                            {rsvpState === "joined" 
+                              ? "Please upload your payment confirmation to secure your spot."
+                              : rsvpState === "none"
+                              ? "Join the session and upload your payment confirmation to secure your spot."
+                              : "Upload your payment confirmation to secure your spot."}
+                          </p>
+                          {proofImage ? (
+                            <div className="space-y-4">
+                              <div className="relative">
+                                <img src={proofImage || "/placeholder.svg"} alt="Payment proof" className="w-full rounded-lg" />
+                                <button
+                                  onClick={() => {
+                                    setProofImage(null)
+                                    setProofImageFile(null)
+                                  }}
+                                  className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-2"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                              {canUploadPaymentProof && !isHostPreview && (
+                                <Button
+                                  onClick={handleSubmitPaymentProof}
+                                  disabled={isSubmittingProof || !proofImageFile}
+                                  className="w-full rounded-full h-11 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {isSubmittingProof ? "Submitting..." : "Submit payment proof"}
+                                </Button>
+                              )}
+                            </div>
+                          ) : (
+                            <label className={`border-2 border-dashed rounded-lg p-8 text-center hover:border-[var(--theme-accent)]/50 transition-colors cursor-pointer block ${
+                              uiMode === "dark" ? "border-white/20" : "border-black/30"
+                            } ${!canUploadPaymentProof || isHostPreview ? "opacity-50 cursor-not-allowed" : ""}`}>
+                              <input 
+                                type="file" 
+                                accept="image/*" 
+                                onChange={handleProofImageUpload} 
+                                className="hidden"
+                                disabled={!canUploadPaymentProof || isHostPreview}
+                              />
+                              <Upload className={`w-8 h-8 mx-auto mb-2 ${
+                                uiMode === "dark" ? "text-white/40" : "text-black/50"
+                              }`} />
+                              <p className={`text-sm ${
+                                uiMode === "dark" ? "text-white/60" : "text-black/70"
+                              }`}>Click to upload or drag and drop</p>
+                              <p className={`text-xs mt-1 ${
+                                uiMode === "dark" ? "text-white/40" : "text-black/50"
+                              }`}>Screenshot or photo</p>
+                            </label>
+                          )}
+                        </>
+                      )
+                    })()}
+                  </>
                 )}
               </Card>
             </motion.div>
@@ -3098,56 +3305,120 @@ export function SessionInvite({
           className="fixed bottom-0 left-0 right-0 z-40 pb-safe"
         >
           <div className="mx-auto max-w-md px-4 pb-4">
-            <div className={`${glassCard} rounded-2xl p-4 shadow-2xl ${rsvpState !== "none" ? "flex flex-col gap-3" : "flex gap-3"}`}>
-              {/* Show status message if user has already RSVP'd */}
-              {rsvpState !== "none" && (
+            {/* Joined state: Green glass premium UI */}
+            {rsvpState === "joined" ? (
+              <div className={cn(
+                "rounded-2xl p-4 shadow-2xl flex flex-col gap-3",
+                "border border-emerald-400/15",
+                "bg-emerald-500/20 backdrop-blur-xl", // Increase the bg opacity (was /10, now /20)
+                "shadow-[0_0_0_1px_rgba(16,185,129,0.12)] shadow-emerald-500/10",
+                isPreviewMode && "pointer-events-none"
+              )}>
+                {/* Status message with celebration animation */}
                 <div className="flex flex-col gap-1 pb-2">
-                  <p className={`text-base font-semibold ${uiMode === "dark" ? "text-white" : "text-black"}`}>
-                    {rsvpState === "joined" ? "You're in ✅" : "You're marked as not going"}
-                  </p>
-                  <p className={`text-xs ${uiMode === "dark" ? "text-white/60" : "text-black/60"}`}>
-                    {rsvpState === "joined" ? "Want to change it? You can decline anytime." : "Plans changed? You can join again."}
+                  <div className="flex items-center gap-2">
+                    <p className="text-base font-semibold text-white">
+                      🎉 You're in!
+                    </p>
+                    {/* Celebration sparkles animation */}
+                    <AnimatePresence>
+                      {shouldCelebrate && !isPreviewMode && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.8 }}
+                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          className="flex items-center"
+                        >
+                          <motion.div
+                            animate={{
+                              scale: [1, 1.2, 1],
+                              opacity: [1, 0.8, 1],
+                            }}
+                            transition={{
+                              duration: 0.4,
+                              repeat: 1,
+                              ease: "easeInOut",
+                            }}
+                          >
+                            <Sparkles className="w-4 h-4 text-emerald-300" />
+                          </motion.div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <p className="text-xs text-white/70">
+                    You can change your response anytime.
                   </p>
                 </div>
-              )}
-              
-              <div className="flex justify-center items-center gap-3 w-full">
-                {/* Show appropriate button based on RSVP state */}
-                {rsvpState === "none" ? (
-                  <>
+                
+                {/* Decline button - solid red, bold white font */}
+                <div className="flex justify-center items-center w-full">
+                  <Button
+                    onClick={(e) => {
+                      if (isPreviewMode) {
+                        e.preventDefault()
+                        return
+                      }
+                      onDeclineClick?.()
+                    }}
+                    variant="ghost"
+                    disabled={isPreviewMode}
+                    className={cn(
+                      "bg-red-500 text-white font-bold hover:bg-red-600 hover:text-white",
+                      "rounded-full h-12 px-6",
+                      "border border-red-600",
+                      isPreviewMode && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    Decline
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              /* Default state for none/declined */
+              <div className={`${glassCard} rounded-2xl p-4 shadow-2xl ${rsvpState !== "none" ? "flex flex-col gap-3" : "flex gap-3"}`}>
+                {/* Show status message if user has declined */}
+                {rsvpState !== "none" && (
+                  <div className="flex flex-col gap-1 pb-2">
+                    <p className={`text-base font-semibold ${uiMode === "dark" ? "text-white" : "text-black"}`}>
+                      You're marked as not going
+                    </p>
+                    <p className={`text-xs ${uiMode === "dark" ? "text-white/60" : "text-black/60"}`}>
+                      Plans changed? You can join again.
+                    </p>
+                  </div>
+                )}
+                
+                <div className="flex justify-center items-center gap-3 w-full">
+                  {/* Show appropriate button based on RSVP state */}
+                  {rsvpState === "none" ? (
+                    <>
+                      <Button 
+                        onClick={onJoinClick || undefined}
+                        className="flex-1 max-w-[170px] bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
+                      >
+                        Join session
+                      </Button>
+                      <Button
+                        onClick={onDeclineClick || undefined}
+                        variant="outline"
+                        className={`flex-1 max-w-[130px] bg-transparent ${uiMode === "dark" ? "border-white/20 text-white hover:bg-white/10" : "border-black/20 text-black hover:bg-black/10"} rounded-full h-12`}
+                      >
+                        Decline
+                      </Button>
+                    </>
+                  ) : (
                     <Button 
                       onClick={onJoinClick || undefined}
-                      className="flex-1 max-w-[170px] bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
+                      className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
                     >
-                      Join session
+                      Join instead
                     </Button>
-                    <Button
-                      onClick={onDeclineClick || undefined}
-                      variant="outline"
-                      className={`flex-1 max-w-[130px] bg-transparent ${uiMode === "dark" ? "border-white/20 text-white hover:bg-white/10" : "border-black/20 text-black hover:bg-black/10"} rounded-full h-12`}
-                    >
-                      Decline
-                    </Button>
-                  </>
-                ) : rsvpState === "joined" ? (
-                  <div className="flex justify-center items-center w-full">
-                    <Button
-                      onClick={onDeclineClick || undefined}
-                      className="bg-red-500/20 text-white rounded-full h-12 border border-red-500/40 hover:bg-red-500/40 hover:text-white shadow-none px-6"
-                    >
-                      Decline
-                    </Button>
-                  </div>
-                ) : (
-                  <Button 
-                    onClick={onJoinClick || undefined}
-                    className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
-                  >
-                    Join instead
-                  </Button>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </motion.div>
       )}

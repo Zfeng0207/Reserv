@@ -4,14 +4,13 @@ import { createClient, createAdminClient } from "@/lib/supabase/server/server"
 import { revalidatePath } from "next/cache"
 
 /**
- * Get participant RSVP status for a session (by name and phone)
+ * Get participant RSVP status for a session (by guest_key)
  * Returns the current status if participant exists, null otherwise
  */
 export async function getParticipantRSVPStatus(
   publicCode: string,
-  name: string,
-  phone?: string | null
-): Promise<{ ok: true; status: "confirmed" | "cancelled" | null } | { ok: false; error: string }> {
+  guestKey: string | null
+): Promise<{ ok: true; status: "confirmed" | "cancelled" | "waitlisted" | null; displayName?: string } | { ok: false; error: string }> {
   const supabase = await createClient()
 
   // Lookup session by public_code
@@ -26,24 +25,18 @@ export async function getParticipantRSVPStatus(
     return { ok: false, error: "Session not found" }
   }
 
-  // Find existing participant by name and phone
-  const trimmedName = name.trim()
-  const trimmedPhone = phone?.trim() || null
-
-  let query = supabase
-    .from("participants")
-    .select("status")
-    .eq("session_id", session.id)
-    .eq("display_name", trimmedName)
-
-  // If phone provided, match by phone; if not, match participants with null phone
-  if (trimmedPhone) {
-    query = query.eq("contact_phone", trimmedPhone)
-  } else {
-    query = query.is("contact_phone", null)
+  // If no guest key provided, return null status
+  if (!guestKey) {
+    return { ok: true, status: null }
   }
 
-  const { data: participant, error } = await query.single()
+  // Find existing participant by guest_key
+  const { data: participant, error } = await supabase
+    .from("participants")
+    .select("status, display_name")
+    .eq("session_id", session.id)
+    .eq("guest_key", guestKey)
+    .single()
 
   if (error) {
     // Not found is OK (means no RSVP yet)
@@ -55,9 +48,11 @@ export async function getParticipantRSVPStatus(
 
   // Map status to our return type
   if (participant.status === "confirmed") {
-    return { ok: true, status: "confirmed" }
+    return { ok: true, status: "confirmed", displayName: participant.display_name }
   } else if (participant.status === "cancelled") {
-    return { ok: true, status: "cancelled" }
+    return { ok: true, status: "cancelled", displayName: participant.display_name }
+  } else if (participant.status === "waitlisted") {
+    return { ok: true, status: "waitlisted", displayName: participant.display_name }
   }
 
   return { ok: true, status: null }
@@ -66,11 +61,12 @@ export async function getParticipantRSVPStatus(
 /**
  * Join a session by public_code (create or update participant with status "confirmed")
  * Enforces capacity limit server-side
- * Uses UPSERT: updates existing participant or creates new one
+ * Uses UPSERT by (session_id, guest_key): updates existing participant or creates new one
  */
 export async function joinSession(
   publicCode: string,
   name: string,
+  guestKey: string,
   phone?: string | null
 ): Promise<{ ok: true } | { ok: false; error: string; code?: "CAPACITY_EXCEEDED" | "SESSION_NOT_FOUND" }> {
   const supabase = await createClient()
@@ -78,7 +74,7 @@ export async function joinSession(
   // Lookup session by public_code
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, capacity, status, host_slug")
+    .select("id, capacity, status, host_slug, waitlist_enabled")
     .eq("public_code", publicCode)
     .eq("status", "open")
     .single()
@@ -90,26 +86,23 @@ export async function joinSession(
   const trimmedName = name.trim()
   const trimmedPhone = phone?.trim() || null
 
-  // Check if participant already exists
-  let existingQuery = supabase
+  // Check if participant already exists by guest_key
+  const { data: existingParticipant } = await supabase
     .from("participants")
     .select("id, status")
     .eq("session_id", session.id)
-    .eq("display_name", trimmedName)
+    .eq("guest_key", guestKey)
+    .single()
 
-  if (trimmedPhone) {
-    existingQuery = existingQuery.eq("contact_phone", trimmedPhone)
-  } else {
-    existingQuery = existingQuery.is("contact_phone", null)
-  }
-
-  const { data: existingParticipant } = await existingQuery.single()
-
-  // If participant already exists, update status
+  // If participant already exists, update status and name (in case they changed it)
   if (existingParticipant) {
     const { error: updateError } = await supabase
       .from("participants")
-      .update({ status: "confirmed" })
+      .update({ 
+        status: "confirmed",
+        display_name: trimmedName,
+        contact_phone: trimmedPhone,
+      })
       .eq("id", existingParticipant.id)
 
     if (updateError) {
@@ -135,21 +128,76 @@ export async function joinSession(
     return { ok: false, error: countError.message }
   }
 
-  // Check capacity
-  if (session.capacity && count !== null && count >= session.capacity) {
-    return { ok: false, error: "Session is full", code: "CAPACITY_EXCEEDED" }
+  // Check capacity and waitlist logic
+  const isFull = session.capacity && count !== null && count >= session.capacity
+  const waitlistEnabled = (session as any).waitlist_enabled !== false // Default to true if null/undefined
+
+  if (isFull) {
+    // Session is full - check if waitlist is enabled
+    if (waitlistEnabled) {
+      // Join waitlist instead
+      const { error: insertError } = await supabase.from("participants").insert({
+        session_id: session.id,
+        display_name: trimmedName,
+        contact_phone: trimmedPhone,
+        guest_key: guestKey,
+        status: "waitlisted",
+      })
+
+      if (insertError) {
+        // If unique constraint violation, try update instead
+        if (insertError.code === "23505") {
+          const { error: updateError } = await supabase
+            .from("participants")
+            .update({ status: "waitlisted", display_name: trimmedName, contact_phone: trimmedPhone })
+            .eq("session_id", session.id)
+            .eq("guest_key", guestKey)
+
+          if (updateError) {
+            return { ok: false, error: updateError.message }
+          }
+        } else {
+          return { ok: false, error: insertError.message }
+        }
+      }
+
+      // Revalidate the session page
+      if (session.host_slug && publicCode) {
+        revalidatePath(`/${session.host_slug}/${publicCode}`)
+      }
+
+      return { ok: true }
+    } else {
+      // Waitlist disabled - block joining
+      return { ok: false, error: "Session is full", code: "CAPACITY_EXCEEDED" }
+    }
   }
 
-  // Insert new participant
+  // Session has capacity - join normally
   const { error: insertError } = await supabase.from("participants").insert({
     session_id: session.id,
     display_name: trimmedName,
     contact_phone: trimmedPhone,
+    guest_key: guestKey,
     status: "confirmed",
   })
 
   if (insertError) {
-    return { ok: false, error: insertError.message }
+    // If unique constraint violation (shouldn't happen due to check above, but handle gracefully)
+    if (insertError.code === "23505") {
+      // Try update instead
+      const { error: updateError } = await supabase
+        .from("participants")
+        .update({ status: "confirmed", display_name: trimmedName, contact_phone: trimmedPhone })
+        .eq("session_id", session.id)
+        .eq("guest_key", guestKey)
+
+      if (updateError) {
+        return { ok: false, error: updateError.message }
+      }
+    } else {
+      return { ok: false, error: insertError.message }
+    }
   }
 
   // Revalidate the session page using the hostSlug/code format
@@ -162,11 +210,12 @@ export async function joinSession(
 
 /**
  * Decline a session by public_code (create or update participant with status "cancelled")
- * Uses UPSERT: updates existing participant or creates new one
+ * Uses UPSERT by (session_id, guest_key): updates existing participant or creates new one
  */
 export async function declineSession(
   publicCode: string,
   name: string,
+  guestKey: string,
   phone?: string | null
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const supabase = await createClient()
@@ -186,26 +235,23 @@ export async function declineSession(
   const trimmedName = name.trim()
   const trimmedPhone = phone?.trim() || null
 
-  // Check if participant already exists
-  let existingQuery = supabase
+  // Check if participant already exists by guest_key
+  const { data: existingParticipant } = await supabase
     .from("participants")
     .select("id")
     .eq("session_id", session.id)
-    .eq("display_name", trimmedName)
-
-  if (trimmedPhone) {
-    existingQuery = existingQuery.eq("contact_phone", trimmedPhone)
-  } else {
-    existingQuery = existingQuery.is("contact_phone", null)
-  }
-
-  const { data: existingParticipant } = await existingQuery.single()
+    .eq("guest_key", guestKey)
+    .single()
 
   // If participant already exists, update status
   if (existingParticipant) {
     const { error: updateError } = await supabase
       .from("participants")
-      .update({ status: "cancelled" })
+      .update({ 
+        status: "cancelled",
+        display_name: trimmedName,
+        contact_phone: trimmedPhone,
+      })
       .eq("id", existingParticipant.id)
 
     if (updateError) {
@@ -225,6 +271,7 @@ export async function declineSession(
     session_id: session.id,
     display_name: trimmedName,
     contact_phone: trimmedPhone,
+    guest_key: guestKey,
     status: "cancelled",
   })
 
@@ -244,7 +291,11 @@ export async function declineSession(
  * Get participants for a session by public_code (public view - only "confirmed" status)
  */
 export async function getSessionParticipants(publicCode: string): Promise<
-  | { ok: true; participants: Array<{ id: string; display_name: string }> }
+  | { 
+      ok: true
+      participants: Array<{ id: string; display_name: string }>
+      waitlist: Array<{ id: string; display_name: string }>
+    }
   | { ok: false; error: string }
 > {
   const supabase = await createClient()
@@ -260,18 +311,35 @@ export async function getSessionParticipants(publicCode: string): Promise<
     return { ok: false, error: "Session not found" }
   }
 
-  const { data, error } = await supabase
+  // Get confirmed participants (going)
+  const { data: confirmedData, error: confirmedError } = await supabase
     .from("participants")
     .select("id, display_name")
     .eq("session_id", session.id)
     .eq("status", "confirmed")
     .order("created_at", { ascending: true })
 
-  if (error) {
-    return { ok: false, error: error.message }
+  if (confirmedError) {
+    return { ok: false, error: confirmedError.message }
   }
 
-  return { ok: true, participants: data || [] }
+  // Get waitlisted participants
+  const { data: waitlistData, error: waitlistError } = await supabase
+    .from("participants")
+    .select("id, display_name")
+    .eq("session_id", session.id)
+    .eq("status", "waitlisted")
+    .order("created_at", { ascending: true })
+
+  if (waitlistError) {
+    return { ok: false, error: waitlistError.message }
+  }
+
+  return { 
+    ok: true, 
+    participants: confirmedData || [],
+    waitlist: waitlistData || []
+  }
 }
 
 /**
@@ -280,8 +348,7 @@ export async function getSessionParticipants(publicCode: string): Promise<
  */
 export async function submitPaymentProof(
   sessionId: string,
-  displayName: string,
-  phone: string | null,
+  guestKey: string,
   fileData: string, // Base64 encoded image data
   fileName: string
 ): Promise<{ ok: true; paymentProofId: string } | { ok: false; error: string }> {
@@ -299,26 +366,20 @@ export async function submitPaymentProof(
     return { ok: false, error: "Session not found or not available" }
   }
 
-  // Find participant by session_id, display_name, and phone
-  const trimmedName = displayName.trim()
-  const trimmedPhone = phone?.trim() || null
-
-  let participantQuery = supabase
+  // Find participant by session_id and guest_key
+  const { data: participant, error: participantError } = await supabase
     .from("participants")
     .select("id")
     .eq("session_id", sessionId)
-    .eq("display_name", trimmedName)
-
-  if (trimmedPhone) {
-    participantQuery = participantQuery.eq("contact_phone", trimmedPhone)
-  } else {
-    participantQuery = participantQuery.is("contact_phone", null)
-  }
-
-  const { data: participant, error: participantError } = await participantQuery.single()
+    .eq("guest_key", guestKey)
+    .eq("status", "confirmed") // Only allow payment if they're confirmed/joined
+    .single()
 
   if (participantError || !participant) {
-    return { ok: false, error: "Participant not found. Please join the session first." }
+    if (participantError?.code === "PGRST116") {
+      return { ok: false, error: "Participant not found. Please join the session first." }
+    }
+    return { ok: false, error: "Participant not found or not confirmed. Please join the session first." }
   }
 
   try {

@@ -10,6 +10,7 @@ import { format, parseISO } from "date-fns"
 import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { getOrCreateGuestKey, getGuestKey } from "@/lib/guest-key"
 
 interface Participant {
   id: string
@@ -27,6 +28,8 @@ interface Session {
   capacity: number | null
   start_at: string
   end_at: string | null
+  court_numbers?: string | null
+  container_overlay_enabled?: boolean | null
   // Add price if it exists in the schema
   // price?: number | null
 }
@@ -34,6 +37,8 @@ interface Session {
 interface PublicSessionViewProps {
   session: Session
   participants: Participant[]
+  waitlist?: Participant[]
+  hostAvatarUrl?: string | null
 }
 
 // Format timestamp to display format
@@ -68,21 +73,65 @@ function getSportDisplayName(sport: string): string {
   return map[sport] || sport
 }
 
-function PublicSessionViewContent({ session, participants }: PublicSessionViewProps) {
+function PublicSessionViewContent({ session, participants, waitlist = [], hostAvatarUrl = null }: PublicSessionViewProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { toast } = useToast()
   const [rsvpDialogOpen, setRsvpDialogOpen] = useState(false)
   const [rsvpAction, setRsvpAction] = useState<"join" | "decline">("join")
   const [uiMode, setUiMode] = useState<"dark" | "light">("dark")
-  const [rsvpState, setRsvpState] = useState<"none" | "joined" | "declined">("none")
+  const [rsvpState, setRsvpState] = useState<"none" | "joined" | "declined" | "waitlisted">("none")
   const [storedParticipantInfo, setStoredParticipantInfo] = useState<{ name: string; phone: string | null } | null>(null)
+  const [guestKey, setGuestKey] = useState<string | null>(null)
   
   // Check if user came from analytics page
   const fromAnalytics = searchParams.get("from") === "analytics"
   
   // Get public_code from session
   const publicCode = (session as any).public_code
+
+  // Initialize guest key on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const key = getOrCreateGuestKey()
+      setGuestKey(key)
+    }
+  }, [])
+
+  // Load participant RSVP status on mount using guest_key
+  useEffect(() => {
+    if (!publicCode || !guestKey) return
+
+    const loadRSVPStatus = async () => {
+      try {
+        const result = await getParticipantRSVPStatus(publicCode, guestKey)
+        if (result.ok) {
+          if (result.status === "confirmed") {
+            setRsvpState("joined")
+            if (result.displayName) {
+              setStoredParticipantInfo({ name: result.displayName, phone: null })
+            }
+          } else if (result.status === "cancelled") {
+            setRsvpState("declined")
+            if (result.displayName) {
+              setStoredParticipantInfo({ name: result.displayName, phone: null })
+            }
+          } else if (result.status === "waitlisted") {
+            setRsvpState("waitlisted")
+            if (result.displayName) {
+              setStoredParticipantInfo({ name: result.displayName, phone: null })
+            }
+          } else {
+            setRsvpState("none")
+          }
+        }
+      } catch (error) {
+        console.error("[PublicSessionView] Error loading RSVP status:", error)
+      }
+    }
+
+    loadRSVPStatus()
+  }, [publicCode, guestKey])
 
   // Hydrate uiMode from localStorage
   useEffect(() => {
@@ -129,11 +178,20 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
       localStorage.setItem(storageKey, JSON.stringify({ name, phone }))
       setStoredParticipantInfo({ name, phone })
 
+      if (!guestKey) {
+        toast({
+          title: "Error",
+          description: "Unable to identify device. Please refresh the page.",
+          variant: "destructive",
+        })
+        return
+      }
+
       const isUpdating = rsvpState !== "none"
       const actionToUse = action || rsvpAction
       let result
       if (actionToUse === "join") {
-        result = await joinSession(publicCode, name, phone)
+        result = await joinSession(publicCode, name, guestKey, phone)
         if (result.ok) {
           setRsvpState("joined")
           toast({
@@ -159,7 +217,7 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
           }
         }
       } else {
-        result = await declineSession(publicCode, name, phone)
+        result = await declineSession(publicCode, name, guestKey, phone)
         if (result.ok) {
           setRsvpState("declined")
           toast({
@@ -238,13 +296,17 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
         initialDate={formattedDate}
         initialLocation={session.location || null}
         initialCapacity={session.capacity || null}
+        initialCourt={session.court_numbers || null}
+        initialContainerOverlayEnabled={session.container_overlay_enabled ?? true}
         initialHostName={session.host_name || null}
+        initialHostAvatarUrl={hostAvatarUrl || null}
         initialDescription={session.description || null}
         demoMode={false}
         demoParticipants={demoParticipants}
         onJoinClick={() => handleRSVPClick("join")}
         onDeclineClick={() => handleRSVPClick("decline")}
         rsvpState={rsvpState}
+        waitlist={waitlist}
       />
 
       {/* RSVP Dialog */}
@@ -259,10 +321,10 @@ function PublicSessionViewContent({ session, participants }: PublicSessionViewPr
   )
 }
 
-export function PublicSessionView({ session, participants }: PublicSessionViewProps) {
+export function PublicSessionView({ session, participants, hostAvatarUrl = null }: PublicSessionViewProps) {
   return (
     <Suspense fallback={<div>Loading...</div>}>
-      <PublicSessionViewContent session={session} participants={participants} />
+      <PublicSessionViewContent session={session} participants={participants} hostAvatarUrl={hostAvatarUrl} />
     </Suspense>
   )
 }

@@ -143,7 +143,7 @@ export function EditorBottomBar({
         initial={{ y: 100 }}
         animate={{ y: 0 }}
         transition={{ duration: 0.3 }}
-        className="fixed bottom-0 left-0 right-0 z-40 pb-safe"
+        className="fixed bottom-0 left-0 right-0 z-40 safe-bottom"
       >
         <div className="mx-auto max-w-md px-4 pb-4 relative">
           {/* LIVE Indicator Badge - positioned at top-left of bottom bar */}
@@ -377,7 +377,7 @@ export function EditorBottomBar({
       <Dialog open={unpublishDialogOpen} onOpenChange={setUnpublishDialogOpen}>
         <DialogContent
           className={cn(
-            "max-w-md rounded-2xl",
+            "w-[calc(100vw-24px)] max-w-[520px] max-h-[calc(100vh-24px)] rounded-2xl",
             uiMode === "dark"
               ? "bg-slate-900 text-white border border-white/10"
               : "bg-white text-black border border-black/10"

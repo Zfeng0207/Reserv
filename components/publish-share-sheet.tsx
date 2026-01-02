@@ -20,6 +20,7 @@ interface PublishShareSheetProps {
   uiMode: "dark" | "light"
   title?: string // Optional custom title
   description?: string // Optional custom description
+  hostName?: string | null // Host name for share text
 }
 
 export function PublishShareSheet({
@@ -32,10 +33,14 @@ export function PublishShareSheet({
   uiMode,
   title = "Published 🎉",
   description = "Your invite link is ready. Share it with your group.",
+  hostName,
 }: PublishShareSheetProps) {
   const router = useRouter()
   const { toast } = useToast()
   const [copied, setCopied] = useState(false)
+  
+  // Generate share text with host name invitation message
+  const shareText = `${hostName || "Your host"} is inviting you to a session!`
 
   const glassCard = uiMode === "dark"
     ? "bg-black/30 border-white/20 text-white backdrop-blur-sm"
@@ -43,7 +48,9 @@ export function PublishShareSheet({
 
   const handleCopyLink = async () => {
     try {
-      await navigator.clipboard.writeText(publishedUrl)
+      // Copy the share text with URL for better UX
+      const textToCopy = `${shareText}\n${publishedUrl}`
+      await navigator.clipboard.writeText(textToCopy)
       setCopied(true)
       toast({
         title: "Link copied",
@@ -63,7 +70,7 @@ export function PublishShareSheet({
   const handleShare = async (platform?: "whatsapp" | "instagram" | "telegram" | "more") => {
     const shareData = {
       title: "Join my session",
-      text: "Join my session on RESERV",
+      text: `${shareText}\n${publishedUrl}`,
       url: publishedUrl,
     }
 
@@ -95,8 +102,8 @@ export function PublishShareSheet({
           // Fall through to deep link
         }
       }
-      // WhatsApp deep link
-      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareData.text + " " + publishedUrl)}`
+      // WhatsApp deep link (shareData.text already includes the URL)
+      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareData.text)}`
       window.open(whatsappUrl, "_blank")
       return
     }
@@ -105,10 +112,7 @@ export function PublishShareSheet({
       // Instagram doesn't have a direct share API, use Web Share if available
       if (navigator.share) {
         try {
-          await navigator.share({
-            ...shareData,
-            text: shareData.text + " " + publishedUrl,
-          })
+          await navigator.share(shareData)
           return
         } catch {
           // Fall through
@@ -133,8 +137,8 @@ export function PublishShareSheet({
           // Fall through to deep link
         }
       }
-      // Telegram deep link
-      const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(publishedUrl)}&text=${encodeURIComponent(shareData.text)}`
+      // Telegram deep link (use shareText without URL for text, URL separately)
+      const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(publishedUrl)}&text=${encodeURIComponent(shareText)}`
       window.open(telegramUrl, "_blank")
       return
     }

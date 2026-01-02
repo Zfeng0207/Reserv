@@ -1,7 +1,7 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import { createClient, getUserId } from "@/lib/supabase/server/server"
+import { createClient, createAdminClient, getUserId } from "@/lib/supabase/server/server"
 import { redirect } from "next/navigation"
 import { generateShortCode } from "@/lib/utils/short-code"
 import { toSlug } from "@/lib/utils/slug"
@@ -109,6 +109,114 @@ export async function updateSessionHostName(sessionId: string, hostName: string 
 }
 
 /**
+ * Update session container overlay enabled preference
+ */
+export async function updateSessionContainerOverlay(sessionId: string, enabled: boolean) {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    throw new Error("Unauthorized")
+  }
+
+  // Verify session belongs to user
+  const { data: session, error: fetchError } = await supabase
+    .from("sessions")
+    .select("host_id")
+    .eq("id", sessionId)
+    .single()
+
+  if (fetchError || !session) {
+    throw new Error("Session not found")
+  }
+
+  if (session.host_id !== userId) {
+    throw new Error("Unauthorized: You don't own this session")
+  }
+
+  // Update session container overlay preference
+  const { data, error } = await supabase
+    .from("sessions")
+    .update({
+      container_overlay_enabled: enabled,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", sessionId)
+    .select()
+    .single()
+
+  if (error) {
+    // If column doesn't exist yet (migration not run), log warning but don't crash
+    if (error.message.includes("container_overlay_enabled") && error.message.includes("schema cache")) {
+      console.warn("[updateSessionContainerOverlay] Column not found. Please run migration: 20250110000000_add_container_overlay_enabled_to_sessions.sql")
+      // Return success anyway - the toggle will work locally, just won't persist until migration is run
+      return { data: null }
+    }
+    throw new Error(`Failed to update container overlay preference: ${error.message}`)
+  }
+
+  // Revalidate paths
+  revalidatePath(`/host/sessions/${sessionId}/edit`)
+  revalidatePath(`/s/${sessionId}`)
+
+  return { data }
+}
+
+/**
+ * Update session waitlist enabled preference
+ */
+export async function updateSessionWaitlistEnabled(sessionId: string, enabled: boolean) {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    throw new Error("Unauthorized")
+  }
+
+  // Verify session belongs to user
+  const { data: session, error: fetchError } = await supabase
+    .from("sessions")
+    .select("host_id")
+    .eq("id", sessionId)
+    .single()
+
+  if (fetchError || !session) {
+    throw new Error("Session not found")
+  }
+
+  if (session.host_id !== userId) {
+    throw new Error("Unauthorized: You don't own this session")
+  }
+
+  // Update session waitlist enabled preference
+  const { data, error } = await supabase
+    .from("sessions")
+    .update({
+      waitlist_enabled: enabled,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", sessionId)
+    .select()
+    .single()
+
+  if (error) {
+    // If column doesn't exist yet (migration not run), log warning but don't crash
+    if (error.message.includes("waitlist_enabled") && error.message.includes("schema cache")) {
+      console.warn("[updateSessionWaitlistEnabled] Column not found. Please run migration: 20250112000000_add_waitlist_enabled_to_sessions.sql")
+      // Return success anyway - the toggle will work locally, just won't persist until migration is run
+      return { data: null }
+    }
+    throw new Error(`Failed to update waitlist preference: ${error.message}`)
+  }
+
+  // Revalidate paths
+  revalidatePath(`/host/sessions/${sessionId}/edit`)
+  revalidatePath(`/s/${sessionId}`)
+
+  return { data }
+}
+
+/**
  * Update session cover URL
  */
 export async function updateSessionCoverUrl(sessionId: string, coverUrl: string | null) {
@@ -167,7 +275,7 @@ export async function updateSessionCoverUrl(sessionId: string, coverUrl: string 
 export async function getPublishedSessionInfo(
   sessionId: string
 ): Promise<
-  | { ok: true; publicCode: string; hostSlug: string; isPublished: boolean }
+  | { ok: true; publicCode: string; hostSlug: string; hostName: string | null; isPublished: boolean }
   | { ok: false; error: string }
 > {
   const supabase = await createClient()
@@ -177,10 +285,10 @@ export async function getPublishedSessionInfo(
     return { ok: false, error: "Unauthorized" }
   }
 
-  // Get session with public_code and host_slug
+  // Get session with public_code, host_slug, and host_name for share text
   const { data: session, error: fetchError } = await supabase
     .from("sessions")
-    .select("host_id, public_code, host_slug, status")
+    .select("host_id, public_code, host_slug, host_name, status")
     .eq("id", sessionId)
     .single()
 
@@ -205,6 +313,7 @@ export async function getPublishedSessionInfo(
     ok: true,
     publicCode: session.public_code!,
     hostSlug,
+    hostName: session.host_name || null,
     isPublished: true,
   }
 }
@@ -237,6 +346,7 @@ export async function getSessionAnalytics(sessionId: string): Promise<
       startAt: string | null
       hostSlug: string | null
       publicCode: string | null
+      waitlistEnabled: boolean
     }
   | { ok: false; error: string }
 > {
@@ -299,14 +409,17 @@ export async function getSessionAnalytics(sessionId: string): Promise<
 
   // Get payment data from payment_proofs table
   // Schema: payment_proofs table with payment_status enum: "pending_review" | "approved" | "rejected"
-  // Count all payment proofs (pending_review + approved = received)
+  // Cash payments are stored as payment_proofs with payment_status='approved' and proof_image_url=null
+  // Count all payment proofs (pending_review + approved = received), which includes:
+  // - Uploaded proofs with status pending_review or approved
+  // - Cash payments with status approved (proof_image_url=null)
   const { data: allPaymentProofs, error: paymentError } = await supabase
     .from("payment_proofs")
-    .select("amount, payment_status")
+    .select("amount, payment_status, proof_image_url")
     .eq("session_id", sessionId)
     .in("payment_status", ["pending_review", "approved"])
 
-  // Get approved payment proofs for collected amount
+  // Get approved payment proofs for collected amount (includes cash payments)
   const { data: approvedPaymentProofs } = await supabase
     .from("payment_proofs")
     .select("amount, payment_status")
@@ -314,8 +427,13 @@ export async function getSessionAnalytics(sessionId: string): Promise<
     .eq("payment_status", "approved")
 
   // Calculate payment counts
+  // receivedCount: all payment proofs (pending + approved), including cash payments
   const receivedCount = allPaymentProofs?.length || 0
+  
+  // pendingCount: only uploaded proofs that are pending (excludes cash, excludes approved uploads)
   const pendingCount = allPaymentProofs?.filter((p) => p.payment_status === "pending_review").length || 0
+  
+  // confirmedCount: all approved payments (includes approved uploads + cash payments)
   const confirmedCount = allPaymentProofs?.filter((p) => p.payment_status === "approved").length || 0
   
   // Legacy fields (for backward compatibility)
@@ -348,6 +466,7 @@ export async function getSessionAnalytics(sessionId: string): Promise<
     startAt: session.start_at as string | null,
     hostSlug: session.host_slug as string | null,
     publicCode: session.public_code as string | null,
+    waitlistEnabled: (session as any).waitlist_enabled !== false, // Default to true if null/undefined
   }
 }
 
@@ -377,6 +496,8 @@ export async function publishSession(
     sport: "badminton" | "pickleball" | "volleyball" | "other"
     description?: string | null
     coverUrl?: string | null
+    courtNumbers?: string | null
+    containerOverlayEnabled?: boolean | null
   }
 ): Promise<{ ok: true; publicCode: string; hostSlug: string; sessionId: string } | { ok: false; error: string }> {
   const supabase = await createClient()
@@ -435,6 +556,8 @@ export async function publishSession(
         sport: sessionData.sport,
         description: sessionData.description || null,
         cover_url: sessionData.coverUrl || null,
+        court_numbers: sessionData.courtNumbers || null,
+        container_overlay_enabled: sessionData.containerOverlayEnabled ?? true,
         status: "draft", // Will be set to "open" after publishing
       })
       .select("id, host_id, public_code, host_slug, status")
@@ -538,6 +661,8 @@ export async function publishSession(
       public_code: publicCode,
       host_slug: hostSlug,
       status: "open",
+      court_numbers: sessionData.courtNumbers || null,
+      container_overlay_enabled: sessionData.containerOverlayEnabled ?? true,
       updated_at: new Date().toISOString(),
     })
     .eq("id", actualSessionId)
@@ -568,6 +693,8 @@ export async function updateLiveSession(
     sport: "badminton" | "pickleball" | "volleyball" | "other"
     description?: string | null
     coverUrl?: string | null
+    courtNumbers?: string | null
+    containerOverlayEnabled?: boolean | null
   }
 ): Promise<{ ok: true; publicCode: string; hostSlug: string } | { ok: false; error: string }> {
   const supabase = await createClient()
@@ -613,6 +740,8 @@ export async function updateLiveSession(
       sport: sessionData.sport,
       description: sessionData.description || null,
       cover_url: sessionData.coverUrl || null,
+      court_numbers: sessionData.courtNumbers || null,
+      container_overlay_enabled: sessionData.containerOverlayEnabled ?? true,
       updated_at: new Date().toISOString(),
       // NOTE: status remains 'open' (not changed)
     })
@@ -884,6 +1013,7 @@ export async function updateDraftSession(
 
 /**
  * Get payment uploads for a session (host-only)
+ * Returns ALL confirmed participants with their latest payment proof (if any)
  */
 export async function getPaymentUploadsForSession(
   sessionId: string
@@ -891,14 +1021,15 @@ export async function getPaymentUploadsForSession(
   | {
       ok: true
       uploads: Array<{
-        id: string
+        id: string | null // null if no payment proof exists
         participantId: string
         participantName: string
         proofImageUrl: string | null
-        paymentStatus: "pending_review" | "approved" | "rejected"
-        createdAt: string
+        paymentStatus: "pending_review" | "approved" | "rejected" | null // null if no payment proof
+        createdAt: string | null // null if no payment proof
         amount: number | null
         currency: string | null
+        hasProof: boolean // true if participant uploaded a proof, false if cash-only or unpaid
       }>
     }
   | { ok: false; error: string }
@@ -925,8 +1056,26 @@ export async function getPaymentUploadsForSession(
     return { ok: false, error: "Unauthorized: You don't own this session" }
   }
 
-  // Fetch payment proofs with participant info
-  // Note: proof_image_url may not be in generated types, so we cast to any to access it
+  // Fetch all confirmed participants for this session
+  const { data: participants, error: participantsError } = await supabase
+    .from("participants")
+    .select("id, display_name, created_at")
+    .eq("session_id", sessionId)
+    .eq("status", "confirmed")
+    .order("created_at", { ascending: true })
+
+  if (participantsError) {
+    console.error("[getPaymentUploadsForSession] Error fetching participants:", participantsError)
+    return { ok: false, error: participantsError.message }
+  }
+
+  if (!participants || participants.length === 0) {
+    return { ok: true, uploads: [] }
+  }
+
+  const participantIds = participants.map((p) => p.id)
+
+  // Fetch all payment proofs for these participants (get latest per participant)
   const { data: paymentProofs, error: paymentError } = await supabase
     .from("payment_proofs")
     .select(
@@ -937,46 +1086,59 @@ export async function getPaymentUploadsForSession(
       created_at,
       amount,
       currency,
-      participants(display_name)
+      proof_image_url
     `
     )
     .eq("session_id", sessionId)
+    .in("participant_id", participantIds)
     .order("created_at", { ascending: false })
 
   if (paymentError) {
-    console.error("[getPaymentUploadsForSession] Error:", paymentError)
+    console.error("[getPaymentUploadsForSession] Error fetching payment proofs:", paymentError)
     return { ok: false, error: paymentError.message }
   }
 
-  // Fetch image URLs in a separate query since proof_image_url might not be in types
-  const proofIds = paymentProofs?.map((p) => p.id) || []
-  let imageUrls: Record<string, string | null> = {}
-  
-  if (proofIds.length > 0) {
-    const { data: proofImages } = await supabase
-      .from("payment_proofs")
-      .select("id, proof_image_url")
-      .in("id", proofIds)
-    
-    proofImages?.forEach((img: any) => {
-      imageUrls[img.id] = img.proof_image_url || null
-    })
-  }
+  // Group proofs by participant_id and get the latest one for each
+  const latestProofByParticipant: Record<string, typeof paymentProofs[0]> = {}
+  paymentProofs?.forEach((proof: any) => {
+    const pid = proof.participant_id
+    if (!latestProofByParticipant[pid]) {
+      latestProofByParticipant[pid] = proof
+    }
+  })
 
-  const uploads =
-    paymentProofs?.map((proof) => {
-      const participant = proof.participants as { display_name: string } | null
+  // Build merged list: one entry per participant with their latest proof (if any)
+  const uploads = participants.map((participant) => {
+    const proof = latestProofByParticipant[participant.id]
+    
+    if (proof) {
+      // Participant has a payment proof
       return {
         id: proof.id,
-        participantId: proof.participant_id,
-        participantName: participant?.display_name || "Unknown",
-        proofImageUrl: imageUrls[proof.id] || null,
+        participantId: participant.id,
+        participantName: participant.display_name,
+        proofImageUrl: proof.proof_image_url || null,
         paymentStatus: proof.payment_status as "pending_review" | "approved" | "rejected",
         createdAt: proof.created_at,
         amount: proof.amount,
         currency: proof.currency,
+        hasProof: !!proof.proof_image_url, // true if they uploaded an image
       }
-    }) || []
+    } else {
+      // Participant has no payment proof yet
+      return {
+        id: null,
+        participantId: participant.id,
+        participantName: participant.display_name,
+        proofImageUrl: null,
+        paymentStatus: null,
+        createdAt: null,
+        amount: null,
+        currency: null,
+        hasProof: false,
+      }
+    }
+  })
 
   return { ok: true, uploads }
 }
@@ -1040,4 +1202,94 @@ export async function confirmParticipantPaid(
   revalidatePath(`/host/sessions/${sessionId}/edit`)
 
   return { ok: true }
+}
+
+/**
+ * Mark participant as paid by cash (host-only)
+ * Creates a payment_proof record with payment_status='approved' and no proof_image_url
+ */
+export async function markParticipantPaidByCash(
+  sessionId: string,
+  participantId: string
+): Promise<{ ok: true; paymentProofId: string } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  // Verify session belongs to host
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .select("id, host_id")
+    .eq("id", sessionId)
+    .single()
+
+  if (sessionError || !session) {
+    return { ok: false, error: "Session not found" }
+  }
+
+  if (session.host_id !== userId) {
+    return { ok: false, error: "Unauthorized: You don't own this session" }
+  }
+
+  // Verify participant belongs to this session and is confirmed
+  const { data: participant, error: participantError } = await supabase
+    .from("participants")
+    .select("id, session_id, status")
+    .eq("id", participantId)
+    .single()
+
+  if (participantError || !participant) {
+    return { ok: false, error: "Participant not found" }
+  }
+
+  if (participant.session_id !== sessionId) {
+    return { ok: false, error: "Participant does not belong to this session" }
+  }
+
+  if (participant.status !== "confirmed") {
+    return { ok: false, error: "Participant is not confirmed" }
+  }
+
+  // Check if participant already has an approved payment proof
+  const { data: existingProof } = await supabase
+    .from("payment_proofs")
+    .select("id, payment_status")
+    .eq("session_id", sessionId)
+    .eq("participant_id", participantId)
+    .eq("payment_status", "approved")
+    .maybeSingle()
+
+  if (existingProof) {
+    return { ok: false, error: "Participant is already marked as paid" }
+  }
+
+  // Use admin client to insert payment proof (bypasses RLS)
+  const adminClient = createAdminClient()
+  
+  // Create a payment_proof record with payment_status='approved' and no proof_image_url (cash payment)
+  const { data: newProof, error: insertError } = await adminClient
+    .from("payment_proofs")
+    .insert({
+      session_id: sessionId,
+      participant_id: participantId,
+      payment_status: "approved",
+      proof_image_url: null, // No image for cash payments
+      ocr_status: "pending",
+      created_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single()
+
+  if (insertError) {
+    console.error("[markParticipantPaidByCash] Error:", insertError)
+    return { ok: false, error: insertError.message }
+  }
+
+  // Revalidate paths
+  revalidatePath(`/host/sessions/${sessionId}/edit`)
+
+  return { ok: true, paymentProofId: newProof.id }
 }

@@ -45,6 +45,7 @@ interface AnalyticsData {
   startAt: string | null
   hostSlug: string | null
   publicCode: string | null
+  waitlistEnabled: boolean
 }
 
 export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalyticsProps) {
@@ -70,6 +71,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
     requirePaymentProof: false,
     autoCloseWhenFull: true,
     showGuestListPublicly: true,
+    waitlistEnabled: true, // Default to true
   })
 
   useEffect(() => {
@@ -89,12 +91,16 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
             startAt: result.startAt,
             hostSlug: result.hostSlug,
             publicCode: result.publicCode,
+            waitlistEnabled: result.waitlistEnabled,
           })
           
           // Initialize requirePaymentProof based on price
           if (result.pricePerPerson && result.pricePerPerson > 0) {
             setQuickSettings((prev) => ({ ...prev, requirePaymentProof: true }))
           }
+          
+          // Initialize waitlistEnabled from DB
+          setQuickSettings((prev) => ({ ...prev, waitlistEnabled: result.waitlistEnabled }))
         }
       } catch (error) {
         console.error("Failed to fetch analytics:", error)
@@ -474,6 +480,34 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
                   }
                 />
               </div>
+
+              {/* Enable waiting list */}
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col">
+                  <Label htmlFor="waitlist" className={cn("text-sm", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+                    Enable waiting list
+                  </Label>
+                  <p className={cn("text-xs mt-0.5", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+                    Allow users to join waitlist when session is full
+                  </p>
+                </div>
+                <Switch
+                  id="waitlist"
+                  checked={quickSettings.waitlistEnabled}
+                  onCheckedChange={async (checked) => {
+                    setQuickSettings((prev) => ({ ...prev, waitlistEnabled: checked }))
+                    try {
+                      const { updateSessionWaitlistEnabled } = await import("@/app/host/sessions/[id]/actions")
+                      await updateSessionWaitlistEnabled(sessionId, checked)
+                      router.refresh()
+                    } catch (error) {
+                      console.error("[HostSessionAnalytics] Error updating waitlist:", error)
+                      // Revert on error
+                      setQuickSettings((prev) => ({ ...prev, waitlistEnabled: !checked }))
+                    }
+                  }}
+                />
+              </div>
             </div>
           </Card>
         </motion.div>
@@ -483,7 +517,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
       <Dialog open={unpublishDialogOpen} onOpenChange={setUnpublishDialogOpen}>
         <DialogContent
           className={cn(
-            "max-w-md rounded-2xl",
+            "w-[calc(100vw-24px)] max-w-[520px] max-h-[calc(100vh-24px)] rounded-2xl",
             uiMode === "dark"
               ? "bg-slate-900 text-white border border-white/10"
               : "bg-white text-black border border-black/10"

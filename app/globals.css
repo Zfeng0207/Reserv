@@ -247,13 +247,23 @@
   background: oklch(0.99 0.005 140 / 0.3);
 }
 
-/* Add safe-area utilities for iPhone */
+/* Safe-area utilities for iPhone and mobile devices */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 .safe-top {
-  padding-top: env(safe-area-inset-top);
+  padding-top: calc(var(--safe-top) + 10px);
 }
 
 .pb-safe {
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: calc(var(--safe-bottom) + 12px);
+}
+
+/* Sticky bars that must avoid the home indicator */
+.safe-bottom {
+  padding-bottom: calc(var(--safe-bottom) + 12px);
 }
 
 /* Adding utility for hiding scrollbar in horizontal participant list */

@@ -9,19 +9,20 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
-import { ArrowLeft, Check, Clock, Image as ImageIcon, X } from "lucide-react"
+import { ArrowLeft, Check, Clock, Image as ImageIcon, X, DollarSign } from "lucide-react"
 import { formatDistanceToNow, parseISO } from "date-fns"
 import Image from "next/image"
 
 interface PaymentUpload {
-  id: string
+  id: string | null // null if no payment proof exists
   participantId: string
   participantName: string
   proofImageUrl: string | null
-  paymentStatus: "pending_review" | "approved" | "rejected"
-  createdAt: string
+  paymentStatus: "pending_review" | "approved" | "rejected" | null // null if no payment proof
+  createdAt: string | null // null if no payment proof
   amount: number | null
   currency: string | null
+  hasProof: boolean // true if participant uploaded a proof, false if cash-only or unpaid
 }
 
 interface PaymentsReviewViewProps {
@@ -36,6 +37,7 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
   const [uploads, setUploads] = useState<PaymentUpload[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [markingCashId, setMarkingCashId] = useState<string | null>(null)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
 
   const glassCard = uiMode === "dark"
@@ -74,6 +76,8 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
   }, [sessionId, toast])
 
   const handleConfirmPaid = async (uploadId: string) => {
+    if (!uploadId) return
+    
     setConfirmingId(uploadId)
     try {
       const { confirmParticipantPaid } = await import("@/app/host/sessions/[id]/actions")
@@ -88,12 +92,12 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
         return
       }
 
-      // Optimistically update local state
-      setUploads((prev) =>
-        prev.map((upload) =>
-          upload.id === uploadId ? { ...upload, paymentStatus: "approved" as const } : upload
-        )
-      )
+      // Refresh the list to get updated data
+      const { getPaymentUploadsForSession } = await import("@/app/host/sessions/[id]/actions")
+      const refreshResult = await getPaymentUploadsForSession(sessionId)
+      if (refreshResult.ok) {
+        setUploads(refreshResult.uploads)
+      }
 
       toast({
         title: "Payment confirmed",
@@ -114,6 +118,47 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
     }
   }
 
+  const handleMarkPaidByCash = async (participantId: string) => {
+    setMarkingCashId(participantId)
+    try {
+      const { markParticipantPaidByCash } = await import("@/app/host/sessions/[id]/actions")
+      const result = await markParticipantPaidByCash(sessionId, participantId)
+
+      if (!result.ok) {
+        toast({
+          title: "Failed to mark as paid",
+          description: result.error || "Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Refresh the list to get updated data
+      const { getPaymentUploadsForSession } = await import("@/app/host/sessions/[id]/actions")
+      const refreshResult = await getPaymentUploadsForSession(sessionId)
+      if (refreshResult.ok) {
+        setUploads(refreshResult.uploads)
+      }
+
+      toast({
+        title: "Marked as paid (cash)",
+        description: "Participant has been marked as paid.",
+      })
+
+      // Refresh analytics data
+      router.refresh()
+    } catch (error: any) {
+      console.error("[PaymentsReviewView] Error marking as paid:", error)
+      toast({
+        title: "Failed to mark as paid",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setMarkingCashId(null)
+    }
+  }
+
   const getInitial = (name: string) => {
     return name.charAt(0).toUpperCase() || "?"
   }
@@ -126,7 +171,7 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
     }
   }
 
-  const getStatusBadge = (status: "pending_review" | "approved" | "rejected") => {
+  const getStatusBadge = (status: "pending_review" | "approved" | "rejected" | null) => {
     switch (status) {
       case "approved":
         return {
@@ -138,10 +183,15 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
           label: "Rejected",
           color: "bg-red-500/20 text-red-400 border-red-500/30",
         }
-      default:
+      case "pending_review":
         return {
           label: "Pending",
           color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+        }
+      default:
+        return {
+          label: "Unpaid",
+          color: "bg-slate-500/20 text-slate-400 border-slate-500/30",
         }
     }
   }
@@ -201,7 +251,7 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
             </h1>
             {uploads.length > 0 && (
               <p className={cn("text-sm mt-1", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
-                {uploads.length} upload{uploads.length !== 1 ? "s" : ""}
+                {uploads.length} participant{uploads.length !== 1 ? "s" : ""}
               </p>
             )}
           </div>
@@ -212,10 +262,10 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
           <Card className={cn("p-8 text-center", glassCard)}>
             <ImageIcon className={cn("w-12 h-12 mx-auto mb-4", uiMode === "dark" ? "text-white/40" : "text-black/40")} />
             <h3 className={cn("text-lg font-semibold mb-2", uiMode === "dark" ? "text-white" : "text-black")}>
-              No payment uploads yet
+              No participants yet
             </h3>
             <p className={cn("text-sm", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
-              When participants upload proof, it'll appear here.
+              When participants join, they'll appear here.
             </p>
           </Card>
         )}
@@ -226,11 +276,14 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
             {uploads.map((upload) => {
               const statusBadge = getStatusBadge(upload.paymentStatus)
               const isConfirming = confirmingId === upload.id
+              const isMarkingCash = markingCashId === upload.participantId
               const isConfirmed = upload.paymentStatus === "approved"
+              const hasUpload = upload.hasProof
+              const hasNoProof = !upload.proofImageUrl && !upload.hasProof
 
               return (
                 <motion.div
-                  key={upload.id}
+                  key={upload.participantId}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3 }}
@@ -257,8 +310,14 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
                             {upload.participantName}
                           </p>
                           <p className={cn("text-xs flex items-center gap-1", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
-                            <Clock className="w-3 h-3" />
-                            {formatTimeAgo(upload.createdAt)}
+                            {upload.createdAt ? (
+                              <>
+                                <Clock className="w-3 h-3" />
+                                {formatTimeAgo(upload.createdAt)}
+                              </>
+                            ) : (
+                              "No upload yet"
+                            )}
                           </p>
                         </div>
 
@@ -275,7 +334,7 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
                         </div>
                       )}
 
-                      {/* Image preview */}
+                      {/* Image preview (if proof uploaded) */}
                       {upload.proofImageUrl && (
                         <div
                           onClick={() => setSelectedImage(upload.proofImageUrl!)}
@@ -292,42 +351,87 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
                         </div>
                       )}
 
-                      {/* Confirm button */}
+
+                      {/* Action buttons */}
                       {!isConfirmed && (
-                        <Button
-                          onClick={() => handleConfirmPaid(upload.id)}
-                          disabled={isConfirming}
-                          className={cn(
-                            "w-full rounded-full font-medium",
-                            "bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black",
-                            isConfirming && "opacity-50"
+                        <>
+                          {/* Confirm paid button (if proof uploaded) */}
+                          {upload.id && upload.proofImageUrl && (
+                            <Button
+                              onClick={() => handleConfirmPaid(upload.id!)}
+                              disabled={isConfirming}
+                              className={cn(
+                                "w-full rounded-full font-medium",
+                                "bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black",
+                                isConfirming && "opacity-50"
+                              )}
+                            >
+                              <AnimatePresence mode="wait">
+                                {isConfirming ? (
+                                  <motion.div
+                                    key="loading"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="flex items-center gap-2"
+                                  >
+                                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                                    Confirming...
+                                  </motion.div>
+                                ) : (
+                                  <motion.div
+                                    key="confirm"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="flex items-center gap-2"
+                                  >
+                                    Confirm paid
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </Button>
                           )}
-                        >
-                          <AnimatePresence mode="wait">
-                            {isConfirming ? (
-                              <motion.div
-                                key="loading"
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                className="flex items-center gap-2"
-                              >
-                                <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                                Confirming...
-                              </motion.div>
-                            ) : (
-                              <motion.div
-                                key="confirm"
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                className="flex items-center gap-2"
-                              >
-                                Confirm paid
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </Button>
+
+                          {/* Mark paid (cash) button (if no proof) */}
+                          {!upload.id && (
+                            <Button
+                              onClick={() => handleMarkPaidByCash(upload.participantId)}
+                              disabled={isMarkingCash}
+                              className={cn(
+                                "w-full rounded-full font-medium",
+                                "bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black",
+                                isMarkingCash && "opacity-50"
+                              )}
+                            >
+                              <AnimatePresence mode="wait">
+                                {isMarkingCash ? (
+                                  <motion.div
+                                    key="loading"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="flex items-center gap-2"
+                                  >
+                                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                                    Marking...
+                                  </motion.div>
+                                ) : (
+                                  <motion.div
+                                    key="mark"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="flex items-center gap-2"
+                                  >
+                                    <DollarSign className="w-4 h-4" />
+                                    Mark paid (cash)
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </Button>
+                          )}
+                        </>
                       )}
 
                       {/* Confirmed state */}
@@ -342,7 +446,9 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
                           )}
                         >
                           <Check className="w-4 h-4 text-green-400" />
-                          <span className="text-sm font-medium text-green-400">Payment confirmed</span>
+                          <span className="text-sm font-medium text-green-400">
+                            Payment confirmed {!hasUpload && "(cash)"}
+                          </span>
                         </motion.div>
                       )}
                     </div>

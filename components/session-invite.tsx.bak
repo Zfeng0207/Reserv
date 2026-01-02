@@ -3582,6 +3582,255 @@ export function SessionInvite({
                 isPreviewMode={isPreviewMode}
               />
             </div>
+            {/* Old button-based RSVP UI removed - replaced with SwipeRSVPControl */}
+          </div>
+        </motion.div>
+      )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// OLD CODE REMOVED - kept for reference during migration
+/*
+            {rsvpState === "joined" ? (
+              <div className={cn(
+                "rounded-2xl p-4 shadow-2xl flex flex-col gap-3",
+                "border border-emerald-400/15",
+                "bg-emerald-500/20 backdrop-blur-xl", // Increase the bg opacity (was /10, now /20)
+                "shadow-[0_0_0_1px_rgba(16,185,129,0.12)] shadow-emerald-500/10",
+                isPreviewMode && "pointer-events-none"
+              )}>
+                {/* Status message with celebration animation */}
+                <div className="flex flex-col gap-1 pb-2">
+                  <div className="flex items-center gap-2">
+                    <p className="text-base font-semibold text-white">
+                      🎉 You're in!
+                    </p>
+                    {/* Celebration sparkles animation */}
+                    <AnimatePresence>
+                      {shouldCelebrate && !isPreviewMode && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.8 }}
+                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          className="flex items-center"
+                        >
+                          <motion.div
+                            animate={{
+                              scale: [1, 1.2, 1],
+                              opacity: [1, 0.8, 1],
+                            }}
+                            transition={{
+                              duration: 0.4,
+                              repeat: 1,
+                              ease: "easeInOut",
+                            }}
+                          >
+                            <Sparkles className="w-4 h-4 text-emerald-300" />
+                          </motion.div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <p className="text-xs text-white/70">
+                    You can change your response anytime.
+                  </p>
+                </div>
+                
+                {/* Decline button and Share icon */}
+                <div className="flex justify-center items-center gap-2 w-full">
+                  <Button
+                    onClick={(e) => {
+                      if (isPreviewMode) {
+                        e.preventDefault()
+                        return
+                      }
+                      onDeclineClick?.()
+                    }}
+                    disabled={isPreviewMode}
+                    className={cn(
+                      "rounded-full h-12 px-6 font-medium shadow-lg",
+                      "bg-gradient-to-r from-red-400 to-red-600 hover:from-red-500 hover:to-red-700",
+                      uiMode === "dark" ? "text-black" : "text-white",
+                      "shadow-red-500/20",
+                      isPreviewMode && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    Decline
+                  </Button>
+                  {actualSessionId && !demoMode && (
+                    <Button
+                      onClick={(e) => {
+                        if (isPreviewMode) {
+                          e.preventDefault()
+                          return
+                        }
+                        handleShareInviteLink()
+                      }}
+                      variant="ghost"
+                      size="icon"
+                      disabled={isPreviewMode}
+                      className={cn(
+                        "h-12 w-12 rounded-full",
+                        uiMode === "dark"
+                          ? "text-white hover:bg-white/10"
+                          : "text-black hover:bg-black/10",
+                        isPreviewMode && "opacity-50 cursor-not-allowed"
+                      )}
+                      aria-label="Share invite link"
+                    >
+                      <Share2 className="h-5 w-5" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : rsvpState === "waitlisted" ? (
+              /* Waitlisted state */
+              <div className={cn(
+                "rounded-2xl p-4 shadow-2xl flex flex-col gap-3",
+                "border border-amber-400/15",
+                "bg-amber-500/10 backdrop-blur-xl",
+                "shadow-[0_0_0_1px_rgba(245,158,11,0.12)] shadow-amber-500/10",
+                isPreviewMode && "pointer-events-none"
+              )}>
+                <div className="flex flex-col gap-1 pb-2">
+                  <p className={`text-base font-semibold ${uiMode === "dark" ? "text-white" : "text-black"}`}>
+                    You're on the waitlist ✅
+                  </p>
+                  <p className={`text-xs ${uiMode === "dark" ? "text-white/70" : "text-black/70"}`}>
+                    We'll let you know if a spot opens.
+                  </p>
+                </div>
+                <div className="flex justify-center items-center gap-2 w-full">
+                  <Button
+                    onClick={(e) => {
+                      if (isPreviewMode) {
+                        e.preventDefault()
+                        return
+                      }
+                      onDeclineClick?.()
+                    }}
+                    disabled={isPreviewMode}
+                    className={cn(
+                      "flex-1 max-w-[130px] rounded-full h-12 font-medium shadow-lg",
+                      "bg-gradient-to-r from-red-400 to-red-600 hover:from-red-500 hover:to-red-700",
+                      uiMode === "dark" ? "text-black" : "text-white",
+                      "shadow-red-500/20",
+                      isPreviewMode && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    Decline
+                  </Button>
+                  {actualSessionId && !demoMode && (
+                    <Button
+                      onClick={(e) => {
+                        if (isPreviewMode) {
+                          e.preventDefault()
+                          return
+                        }
+                        handleShareInviteLink()
+                      }}
+                      variant="ghost"
+                      size="icon"
+                      disabled={isPreviewMode}
+                      className={cn(
+                        "h-12 w-12 rounded-full",
+                        uiMode === "dark"
+                          ? "text-white hover:bg-white/10"
+                          : "text-black hover:bg-black/10",
+                        isPreviewMode && "opacity-50 cursor-not-allowed"
+                      )}
+                      aria-label="Share invite link"
+                    >
+                      <Share2 className="h-5 w-5" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* Default state for none/declined */
+              <div className={`${glassCard} rounded-2xl p-4 shadow-2xl ${rsvpState !== "none" ? "flex flex-col gap-3" : "flex gap-3"}`}>
+                {/* Show status message if user has declined */}
+                {rsvpState !== "none" && (
+                  <div className="flex flex-col gap-1 pb-2">
+                    <p className={`text-base font-semibold ${uiMode === "dark" ? "text-white" : "text-black"}`}>
+                      You're marked as not going
+                    </p>
+                    <p className={`text-xs ${uiMode === "dark" ? "text-white/60" : "text-black/60"}`}>
+                      Plans changed? You can join again.
+                    </p>
+                  </div>
+                )}
+                
+                <div className="flex justify-center items-center gap-2 w-full">
+                  {/* Show appropriate button based on RSVP state */}
+                  {rsvpState === "none" ? (
+                    <>
+                      <Button 
+                        onClick={onJoinClick || undefined}
+                        className="flex-1 max-w-[170px] bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
+                      >
+                        Join session
+                      </Button>
+                      <Button
+                        onClick={onDeclineClick || undefined}
+                        className={cn(
+                          "flex-1 max-w-[130px] rounded-full h-12 font-medium shadow-lg",
+                          "bg-gradient-to-r from-red-400 to-red-600 hover:from-red-500 hover:to-red-700",
+                          uiMode === "dark" ? "text-black" : "text-white",
+                          "shadow-red-500/20"
+                        )}
+                      >
+                        Decline
+                      </Button>
+                      {actualSessionId && !demoMode && (
+                        <Button
+                          onClick={handleShareInviteLink}
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "h-12 w-12 rounded-full",
+                            uiMode === "dark"
+                              ? "text-white hover:bg-white/10"
+                              : "text-black hover:bg-black/10"
+                          )}
+                          aria-label="Share invite link"
+                        >
+                          <Share2 className="h-5 w-5" />
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <Button 
+                        onClick={onJoinClick || undefined}
+                        className="flex-1 bg-gradient-to-r from-[var(--theme-accent-light)] to-[var(--theme-accent-dark)] hover:from-[var(--theme-accent)] hover:to-[var(--theme-accent-dark)] text-black font-medium rounded-full h-12 shadow-lg shadow-[var(--theme-accent)]/20"
+                      >
+                        Join instead
+                      </Button>
+                      {actualSessionId && !demoMode && (
+                        <Button
+                          onClick={handleShareInviteLink}
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "h-12 w-12 rounded-full",
+                            uiMode === "dark"
+                              ? "text-white hover:bg-white/10"
+                              : "text-black hover:bg-black/10"
+                          )}
+                          aria-label="Share invite link"
+                        >
+                          <Share2 className="h-5 w-5" />
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </motion.div>
       )}

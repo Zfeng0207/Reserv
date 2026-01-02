@@ -30,8 +30,32 @@ async function HostSessionEditContent({
     .eq("host_id", userId)
     .single()
 
-  if (error || !session) {
-    console.error(`[HostSessionEditContent] Error fetching session:`, error)
+  if (error) {
+    // Log error details if available, otherwise log the raw error
+    const errorDetails = {
+      ...(error.code && { code: error.code }),
+      ...(error.message && { message: error.message }),
+      ...(error.details && { details: error.details }),
+      ...(error.hint && { hint: error.hint }),
+    }
+    
+    console.error(`[HostSessionEditContent] Error fetching session:`, {
+      error: Object.keys(error).length > 0 ? error : 'empty error object',
+      errorDetails: Object.keys(errorDetails).length > 0 ? errorDetails : 'no error details',
+      sessionId,
+      userId,
+      errorType: typeof error,
+      errorKeys: Object.keys(error),
+    })
+    notFound()
+  }
+
+  if (!session) {
+    console.error(`[HostSessionEditContent] Session not found:`, {
+      sessionId,
+      userId,
+      error: error || null,
+    })
     notFound()
   }
 
@@ -72,6 +96,8 @@ async function HostSessionEditContent({
       initialLocation={session.location || null}
       initialPrice={(session as any).price || null} // Type assertion since price might exist but not in types
       initialCapacity={session.capacity || null}
+      initialCourt={(session as any).court_numbers || null} // Type assertion until types are regenerated
+      initialContainerOverlayEnabled={(session as any).container_overlay_enabled ?? true} // Type assertion until types are regenerated
       initialHostName={session.host_name || null}
       initialDescription={session.description || null}
       initialIsPublished={isPublished} // Pass published status

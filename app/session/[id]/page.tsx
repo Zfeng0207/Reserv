@@ -42,22 +42,35 @@ async function PublicSessionContent({ sessionId }: { sessionId: string }) {
     notFound()
   }
 
-  // Fetch participants (only "confirmed" status for public view)
+  // Fetch participants (confirmed for going list, waitlisted for waitlist)
   const { data: participants, error: participantsError } = await supabase
     .from("participants")
-    .select("id, display_name")
+    .select("id, display_name, status")
     .eq("session_id", sessionId)
-    .eq("status", "confirmed")
+    .in("status", ["confirmed", "waitlisted"])
     .order("created_at", { ascending: true })
 
   if (participantsError) {
     console.error(`[PublicSessionPage] Error fetching participants:`, participantsError)
   }
 
+  // Separate confirmed and waitlisted
+  const confirmedParticipants = (participants || []).filter(p => p.status === "confirmed")
+  const waitlistParticipants = (participants || []).filter(p => p.status === "waitlisted")
+
+  // Fetch host profile for avatar
+  const { data: hostProfile } = await supabase
+    .from("profiles")
+    .select("avatar_url")
+    .eq("id", session.host_id)
+    .single()
+
   return (
     <PublicSessionView
       session={session}
-      participants={participants || []}
+      participants={confirmedParticipants}
+      waitlist={waitlistParticipants}
+      hostAvatarUrl={hostProfile?.avatar_url || null}
     />
   )
 }

@@ -39,13 +39,13 @@ export async function generateMetadata({
 }: {
   params: Promise<{ hostSlug: string; code: string }>
 }): Promise<Metadata> {
-  const { code, hostSlug } = await params
+  const { code } = await params
   const supabase = await createClient()
 
   // Fetch session for metadata
   const { data: session } = await supabase
     .from("sessions")
-    .select("title, host_name, cover_url, status, start_at, location, sport")
+    .select("title, host_name, cover_url, status")
     .eq("public_code", code)
     .single()
 
@@ -77,37 +77,7 @@ export async function generateMetadata({
 
   const title = session.title || "Session invite"
   const hostName = session.host_name || "Someone"
-  
-  // Generate description with session details
-  let description = `${hostName} is inviting you to a session!`
-  if (session.start_at || session.location || session.sport) {
-    const parts: string[] = []
-    if (session.start_at) {
-      try {
-        const startDate = parseISO(session.start_at)
-        const dayName = format(startDate, "EEE")
-        parts.push(`this ${dayName}`)
-      } catch (e) {
-        // Ignore date parsing errors
-      }
-    }
-    const sportLabel = session.sport ? (session.sport === "badminton" ? "badminton" : session.sport === "pickleball" ? "pickleball" : session.sport === "volleyball" ? "volleyball" : "sports") : null
-    const location = session.location || null
-    
-    if (sportLabel) {
-      description = `Join ${hostName} for a ${sportLabel} session`
-      if (parts.length > 0) {
-        description += ` ${parts[0]}`
-      }
-      if (location) {
-        description += ` at ${location}`
-      }
-      description += "!"
-    } else if (location) {
-      description = `Join ${hostName} ${parts.length > 0 ? `${parts[0]} ` : ""}at ${location}!`
-    }
-  }
-  
+  const description = `${hostName} is inviting you to a session!`
   const canonicalUrl = `${siteUrl}/${hostSlug}/${code}`
   const imageUrl = makeAbsoluteCoverUrl(siteUrl, session.cover_url)
 
@@ -192,34 +162,13 @@ async function PublicInviteContent({
     .order("created_at", { ascending: true })
 
   if (participantsError) {
-    console.error(`[PublicInvitePage] Error fetching participants:`, {
-      error: participantsError,
-      code: participantsError.code,
-      message: participantsError.message,
-      details: participantsError.details,
-      hint: participantsError.hint,
-      sessionId: session.id,
-      sessionStatus: session.status,
-    })
-  } else {
-    console.log(`[PublicInvitePage] Fetched ${participants?.length || 0} participants for session ${session.id}`)
+    console.error(`[PublicInvitePage] Error fetching participants:`, participantsError)
   }
-
-  // Fetch host profile for avatar
-  const { data: hostProfile } = await supabase
-    .from("profiles")
-    .select("avatar_url")
-    .eq("id", session.host_id)
-    .single()
-
-  // Get Google avatar from user metadata if available (requires auth check, skip for public)
-  // We'll rely on the uploaded avatar_url from profiles table
 
   return (
     <PublicSessionView
       session={session}
       participants={participants || []}
-      hostAvatarUrl={hostProfile?.avatar_url || null}
     />
   )
 }

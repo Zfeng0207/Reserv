@@ -15,7 +15,6 @@ import { useToast } from "@/hooks/use-toast"
 import { ArrowLeft, Settings, User, Mail, LogOut, Save, Trash2 } from "lucide-react"
 import { getHostSettings, updateHostSettings, getUserProfile, updateUserDisplayName, deleteAllDrafts, type HostSettings } from "@/app/host/settings/actions"
 import { useAuth } from "@/lib/hooks/use-auth"
-import { ProfileAvatarUploader } from "@/components/host/profile-avatar-uploader"
 
 export function HostSettingsClient() {
   const router = useRouter()
@@ -29,8 +28,6 @@ export function HostSettingsClient() {
   const [email, setEmail] = useState("")
   const [displayName, setDisplayName] = useState("")
   const [displayNameDraft, setDisplayNameDraft] = useState("")
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
-  const [googleAvatarUrl, setGoogleAvatarUrl] = useState<string | null>(null)
 
   // Settings state
   const [settings, setSettings] = useState<HostSettings | null>(null)
@@ -62,8 +59,6 @@ export function HostSettingsClient() {
           setEmail(profileResult.email)
           setDisplayName(profileResult.displayName || "")
           setDisplayNameDraft(profileResult.displayName || "")
-          setAvatarUrl(profileResult.avatarUrl)
-          setGoogleAvatarUrl(profileResult.googleAvatarUrl)
         } else {
           toast({
             title: "Error",
@@ -269,14 +264,6 @@ export function HostSettingsClient() {
               </h2>
             </div>
             <div className="space-y-4">
-              {/* Avatar Uploader */}
-              <ProfileAvatarUploader
-                currentAvatarUrl={avatarUrl}
-                googleAvatarUrl={googleAvatarUrl}
-                displayName={displayName}
-                uiMode={uiMode}
-              />
-
               {/* Display Name */}
               <div className="space-y-2">
                 <Label htmlFor="display-name" className={cn("text-sm", uiMode === "dark" ? "text-white/90" : "text-black/90")}>

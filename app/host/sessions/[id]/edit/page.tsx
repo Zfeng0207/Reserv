@@ -30,32 +30,8 @@ async function HostSessionEditContent({
     .eq("host_id", userId)
     .single()
 
-  if (error) {
-    // Log error details if available, otherwise log the raw error
-    const errorDetails = {
-      ...(error.code && { code: error.code }),
-      ...(error.message && { message: error.message }),
-      ...(error.details && { details: error.details }),
-      ...(error.hint && { hint: error.hint }),
-    }
-    
-    console.error(`[HostSessionEditContent] Error fetching session:`, {
-      error: Object.keys(error).length > 0 ? error : 'empty error object',
-      errorDetails: Object.keys(errorDetails).length > 0 ? errorDetails : 'no error details',
-      sessionId,
-      userId,
-      errorType: typeof error,
-      errorKeys: Object.keys(error),
-    })
-    notFound()
-  }
-
-  if (!session) {
-    console.error(`[HostSessionEditContent] Session not found:`, {
-      sessionId,
-      userId,
-      error: error || null,
-    })
+  if (error || !session) {
+    console.error(`[HostSessionEditContent] Error fetching session:`, error)
     notFound()
   }
 

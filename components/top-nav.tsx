@@ -19,6 +19,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { StardustButton } from "@/components/ui/stardust-button"
 import { LiveInviteGuardModal } from "@/components/host/live-invite-guard-modal"
 import { getHostLiveSessions } from "@/app/host/sessions/[id]/actions"
+import { getCurrentReturnTo, setPostAuthRedirect } from "@/lib/post-auth-redirect"
 
 interface TopNavProps {
   showCreateNow?: boolean
@@ -216,7 +217,12 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
             ) : (
                     <>
               <button
-                onClick={() => setLoginDialogOpen(true)}
+                onClick={() => {
+                  // Capture current URL before opening login dialog
+                  const returnTo = getCurrentReturnTo()
+                  setPostAuthRedirect(returnTo)
+                  setLoginDialogOpen(true)
+                }}
                         className="text-gray-700 dark:text-white/70 hover:text-gray-900 dark:hover:text-white text-sm font-medium transition-colors"
               >
                 Login

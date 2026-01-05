@@ -2,6 +2,7 @@
 
 import { createClient, createAdminClient } from "@/lib/supabase/server/server"
 import { revalidatePath } from "next/cache"
+import { logInfo, logError, logWarn, withTrace } from "@/lib/logger"
 
 /**
  * Get participant RSVP status for a session (by guest_key)
@@ -452,7 +453,16 @@ export async function submitPaymentProof(
   participantId: string, // Changed: now accepts participantId directly
   fileData: string, // Base64 encoded image data
   fileName: string
-): Promise<{ ok: true; paymentProofId: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; paymentProofId: string; storagePath?: string; publicUrl?: string } | { ok: false; error: string }> {
+  const traceId = `upload_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`
+  
+  logInfo("payment_api_start", withTrace({
+    sessionId,
+    participantId,
+    fileName,
+    fileSize: fileData.length,
+  }, traceId))
+
   const supabase = await createClient()
 
   // Verify session exists and is open
@@ -464,6 +474,10 @@ export async function submitPaymentProof(
     .single()
 
   if (sessionError || !session) {
+    logError("payment_api_failed", withTrace({
+      error: sessionError?.message || "Session not found",
+      stage: "session_validation",
+    }, traceId))
     return { ok: false, error: "Session not found or not available" }
   }
 
@@ -477,6 +491,11 @@ export async function submitPaymentProof(
     .single()
 
   if (participantError || !participant) {
+    logError("payment_api_failed", withTrace({
+      error: participantError?.message || "Participant not found",
+      stage: "participant_validation",
+      errorCode: participantError?.code,
+    }, traceId))
     if (participantError?.code === "PGRST116") {
       return { ok: false, error: "Participant not found. Please join the session first." }
     }
@@ -497,6 +516,12 @@ export async function submitPaymentProof(
     // Use admin client for storage upload (bypasses RLS, but we've already validated participant on server)
     const adminClient = createAdminClient()
     
+    logInfo("storage_upload_start", withTrace({
+      filePath,
+      contentType: `image/${normalizedExt}`,
+      bufferSize: buffer.length,
+    }, traceId))
+    
     // Upload to Supabase Storage (using payment-proofs bucket)
     const { data: uploadData, error: uploadError } = await adminClient.storage
       .from("payment-proofs")
@@ -507,10 +532,11 @@ export async function submitPaymentProof(
       })
 
     if (uploadError) {
-      console.error("[submitPaymentProof] Storage upload error:", {
-        message: uploadError.message,
-        name: uploadError.name,
-      })
+      logError("storage_upload_result", withTrace({
+        error: uploadError.message,
+        errorName: uploadError.name,
+        stage: "storage_upload",
+      }, traceId))
       
       // Provide more helpful error messages
       const errorMessage = uploadError.message || ""
@@ -527,9 +553,20 @@ export async function submitPaymentProof(
       return { ok: false, error: `Failed to upload image: ${errorMessage || "Please try again."}` }
     }
 
+    logInfo("storage_upload_result", withTrace({
+      storagePath: filePath,
+      success: true,
+    }, traceId))
+
     // Get public URL using admin client
     const { data: urlData } = adminClient.storage.from("payment-proofs").getPublicUrl(filePath)
     const publicUrl = urlData.publicUrl
+
+    logInfo("payment_validation_result", withTrace({
+      participantId,
+      sessionId,
+      validated: true,
+    }, traceId))
 
     // Insert payment_proofs record using admin client (bypasses RLS, but we've validated participant exists)
     const { data: proofData, error: insertError } = await adminClient
@@ -545,19 +582,32 @@ export async function submitPaymentProof(
       .single()
 
     if (insertError) {
-      console.error("[submitPaymentProof] DB insert error:", insertError)
+      logError("final_status_written", withTrace({
+        error: insertError.message,
+        errorCode: insertError.code,
+        stage: "db_insert",
+      }, traceId))
       // Try to clean up uploaded file using admin client
-      const adminClient = createAdminClient()
       await adminClient.storage.from("payment-proofs").remove([filePath])
       return { ok: false, error: "Failed to save payment proof. Please try again." }
     }
 
+    logInfo("final_status_written", withTrace({
+      paymentProofId: proofData.id,
+      paymentStatus: "pending_review",
+      success: true,
+    }, traceId))
+
     // Revalidate session page
     revalidatePath(`/session/${sessionId}`)
 
-    return { ok: true, paymentProofId: proofData.id }
+    return { ok: true, paymentProofId: proofData.id, storagePath: filePath, publicUrl }
   } catch (error: any) {
-    console.error("[submitPaymentProof] Error:", error)
+    logError("payment_api_failed", withTrace({
+      error: error?.message || "Unknown error",
+      stack: error?.stack,
+      stage: "exception",
+    }, traceId))
     return { ok: false, error: error?.message || "Failed to submit payment proof. Please try again." }
   }
 }

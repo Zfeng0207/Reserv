@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { consumePostAuthRedirect } from "@/lib/post-auth-redirect";
 
 export function SignInForm() {
   const router = useRouter();
@@ -59,8 +60,9 @@ export function SignInForm() {
           title: "Success!",
           description: "You've been signed in successfully.",
         });
-        // Redirect to home page
-        window.location.href = "/";
+        // Redirect to stored URL or home page
+        const redirectTo = consumePostAuthRedirect("/")
+        router.push(redirectTo)
       }
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred");

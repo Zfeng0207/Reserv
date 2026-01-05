@@ -10,6 +10,8 @@ import { Chrome, Mail, ArrowLeft } from "lucide-react"
 import { handleGoogleOAuth, handleEmailAuth, handleEmailOtpVerify } from "@/lib/auth"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/lib/hooks/use-auth"
+import { getCurrentReturnTo, setPostAuthRedirect } from "@/lib/post-auth-redirect"
+import { useRouter } from "next/navigation"
 
 const COOLDOWN_S = 60
 
@@ -43,6 +45,7 @@ interface LoginDialogProps {
 export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDialogProps) {
   const { toast } = useToast()
   const { isAuthenticated } = useAuth()
+  const router = useRouter()
   const [showGuestForm, setShowGuestForm] = useState(false)
   const [guestName, setGuestName] = useState("")
   const [showEmailForm, setShowEmailForm] = useState(false)
@@ -54,7 +57,7 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
   const [emailError, setEmailError] = useState<string | null>(null)
   const [cooldownRemaining, setCooldownRemaining] = useState(0)
 
-  // Close dialog when user becomes authenticated
+  // Close dialog when user becomes authenticated and redirect
   useEffect(() => {
     if (isAuthenticated && open) {
       onOpenChange(false)
@@ -67,8 +70,14 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
       setEmailStep("email")
       setEmailError(null)
       setCooldownRemaining(0)
+      
+      // Redirect to stored URL (for OTP verification which happens in-page)
+      const redirectTo = getCurrentReturnTo()
+      if (redirectTo && redirectTo !== "/") {
+        router.push(redirectTo)
+      }
     }
-  }, [isAuthenticated, open, onOpenChange])
+  }, [isAuthenticated, open, onOpenChange, router])
 
   // Cooldown countdown timer
   useEffect(() => {
@@ -144,7 +153,11 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
 
   const handleGoogleClick = async () => {
     try {
-      await handleGoogleOAuth()
+      // Capture current URL before starting OAuth
+      const returnTo = getCurrentReturnTo()
+      setPostAuthRedirect(returnTo)
+      
+      await handleGoogleOAuth(returnTo)
       // Don't close dialog immediately - Supabase will redirect if successful
     } catch (error: any) {
       // Handle error - show toast notification
@@ -194,10 +207,14 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
       return
     }
 
+    // Capture current URL before sending OTP
+    const returnTo = getCurrentReturnTo()
+    setPostAuthRedirect(returnTo)
+
     setIsSending(true)
     setEmailError(null)
     try {
-      await handleEmailAuth(email.trim())
+      await handleEmailAuth(email.trim(), returnTo)
       // Move to code step on success
       setEmailStep("code")
       setOtp("")
@@ -266,12 +283,13 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
     try {
       await handleEmailOtpVerify(email.trim(), otp.trim())
       // Success - user is authenticated, modal will close via useEffect
+      // The useEffect will handle redirecting to the stored URL
       toast({
         title: "Signed in",
         description: "Welcome to Reserv!",
         variant: "default",
       })
-      // The useEffect will handle closing the modal when isAuthenticated becomes true
+      // The useEffect will handle closing the modal and redirecting when isAuthenticated becomes true
     } catch (error: any) {
       setEmailError(error?.message || "Invalid or expired code. Please try again.")
       toast({

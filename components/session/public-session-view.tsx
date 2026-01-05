@@ -5,8 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { SessionInvite } from "@/components/session-invite"
 import { GuestRSVPDialog } from "./guest-rsvp-dialog"
 import { LoginDialog } from "@/components/login-dialog"
+import { getCurrentReturnTo, setPostAuthRedirect } from "@/lib/post-auth-redirect"
 import { joinSession, getParticipantRSVPStatus, getUnpaidParticipants } from "@/app/session/[id]/actions"
-import { log, newTraceId } from "@/lib/logger"
+import { log, logInfo, logWarn, logError, logGrouped, newTraceId, debugEnabled, withTrace } from "@/lib/logger"
 import { useAuth } from "@/lib/hooks/use-auth"
 import { useToast } from "@/hooks/use-toast"
 import { format, parseISO } from "date-fns"
@@ -111,11 +112,28 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
   // Get public_code from session
   const publicCode = session.public_code
 
+  // Track last traceId for debug panel
+  const [lastTraceId, setLastTraceId] = useState<string | null>(null)
+  const [lastJoinError, setLastJoinError] = useState<string | null>(null)
+
   // Initialize guest key on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
       const key = getOrCreateGuestKey()
       setGuestKey(key)
+      
+      // Log page load
+      logInfo("join_page_load", {
+        publicCode,
+        hostSlug: urlHostSlug,
+        sessionId: session.id,
+        url: typeof window !== "undefined" ? window.location.href : null,
+        isAuthenticated,
+        userId: authUser?.id || null,
+        guestKey: key,
+        hasParticipants: participants.length > 0,
+        waitlistCount: waitlist.length,
+      })
     }
   }, [])
 
@@ -233,8 +251,25 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         return
       }
 
-      const traceId = newTraceId("join")
-      log("info", "join_clicked", { traceId, publicCode, name, hasPhone: !!phone, uiMode })
+      // Log request details
+      const requestPayload = {
+        publicCode,
+        name,
+        phone: phone || null,
+        guestKey,
+      }
+      
+      logInfo("join_request", withTrace({
+        publicCode,
+        hostSlug: urlHostSlug,
+        hasName: !!name,
+        nameLength: name.length,
+        hasPhone: !!phone,
+        guestKey,
+        isAuthenticated,
+        userId: authUser?.id || null,
+        payload: requestPayload,
+      }, traceId))
 
       // Use API route for better logging and diagnostics
       const res = await fetch("/api/join", {
@@ -243,12 +278,7 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
           "content-type": "application/json",
           "x-trace-id": traceId,
         },
-        body: JSON.stringify({
-          publicCode,
-          name,
-          phone: phone || null,
-          guestKey,
-        }),
+        body: JSON.stringify(requestPayload),
       })
 
       // Parse response with better error handling
@@ -258,12 +288,14 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         responseText = await res.text()
         // Check if response is HTML (error page)
         if (responseText.trim().startsWith("<!DOCTYPE") || responseText.trim().startsWith("<html")) {
-          log("error", "join_response_is_html", { 
-            traceId, 
+          const error = "Server returned HTML instead of JSON"
+          logError("join_response_is_html", withTrace({ 
             status: res.status,
             contentType: res.headers.get("content-type"),
             responsePreview: responseText.substring(0, 200),
-          })
+            stage: "response_parse",
+          }, traceId))
+          setLastJoinError(error)
           // Try to extract error from HTML or show generic message
           toast({
             title: "Server error",
@@ -274,13 +306,15 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         }
         json = responseText ? JSON.parse(responseText) : null
       } catch (e) {
-        log("error", "join_response_parse_error", { 
-          traceId, 
+        const error = `Failed to parse response: ${String(e)}`
+        logError("join_response_parse_error", withTrace({ 
           status: res.status, 
           error: String(e),
           responsePreview: responseText.substring(0, 200),
           contentType: res.headers.get("content-type"),
-        })
+          stage: "response_parse",
+        }, traceId))
+        setLastJoinError(error)
         json = null
         
         // If we can't parse JSON and it's not HTML, show error
@@ -294,20 +328,27 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         }
       }
       
-      log("info", "join_response", { 
-        traceId, 
+      logInfo("join_response", withTrace({ 
         status: res.status, 
         ok: res.ok, 
         hasJson: !!json,
         jsonKeys: json ? Object.keys(json) : [],
-        jsonOk: json?.ok,
-        jsonParticipantId: json?.participantId,
-        json
-      })
+        bodySnippet: json ? JSON.stringify(json).substring(0, 200) : null,
+        participantId: json?.participantId || null,
+        rsvpStatus: json?.waitlisted ? "waitlisted" : json?.ok ? "joined" : null,
+      }, traceId))
 
       if (!res.ok) {
         const errorMessage = json?.error || json?.detail || "Join failed"
-        log("error", "join_failed_client", { traceId, status: res.status, error: errorMessage })
+        logError("join_failed_client", withTrace({ 
+          status: res.status, 
+          error: errorMessage,
+          errorMessage,
+          stack: new Error().stack,
+          responseText: responseText.substring(0, 500),
+          stage: "api_response",
+        }, traceId))
+        setLastJoinError(errorMessage)
         
         if (res.status === 404) {
           toast({
@@ -421,9 +462,17 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         })
       }
     } catch (error: any) {
+      const errorMsg = error?.message || "Something went wrong. Please try again."
+      logError("join_failed_client", withTrace({
+        error: errorMsg,
+        errorMessage: errorMsg,
+        stack: error?.stack || new Error().stack,
+        stage: "exception",
+      }, traceId))
+      setLastJoinError(errorMsg)
       toast({
         title: "Error",
-        description: error?.message || "Something went wrong. Please try again.",
+        description: errorMsg,
         variant: "destructive",
       })
     }
@@ -449,6 +498,9 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
     }
 
     // First time RSVP - show login/guest dialog first
+    // Capture current URL for redirect after login
+    const returnTo = getCurrentReturnTo()
+    setPostAuthRedirect(returnTo)
     setLoginDialogOpen(true)
   }
 
@@ -495,7 +547,23 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
 
   // Handle Make Payment - logged-in users skip dialog, guests see dialog
   const handleMakePaymentClick = async () => {
+    const traceId = newTraceId("pay")
+    
+    logInfo("make_payment_clicked", withTrace({
+      isAuthenticated,
+      userId: authUser?.id || null,
+      isGuest: !isAuthenticated,
+      guestKey,
+      sessionStarted: hasStarted,
+      publicCode,
+      sessionId: session.id,
+    }, traceId))
+    
     if (!hasStarted) {
+      logWarn("make_payment_blocked", withTrace({
+        reason: "session_not_started",
+        stage: "validation",
+      }, traceId))
       toast({
         title: "Payment not available",
         description: "Payment can only be made once the session starts.",
@@ -505,6 +573,10 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
     }
 
     if (!publicCode) {
+      logError("make_payment_blocked", withTrace({
+        reason: "missing_publicCode",
+        stage: "validation",
+      }, traceId))
       toast({
         title: "Error",
         description: "Session is not published.",
@@ -539,13 +611,27 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
       setPayingForParticipantId(participant.id)
       setPayingForParticipantName(participant.display_name)
       
+      logInfo("payment_user_selected", withTrace({
+        participantId: participant.id,
+        displayName: participant.display_name,
+        action: "auto_selected_logged_in",
+      }, traceId))
+      
       // Scroll to upload section
       setTimeout(() => {
         const paymentSection = document.querySelector('[data-payment-section]')
         if (paymentSection) {
           paymentSection.scrollIntoView({ behavior: "smooth", block: "start" })
+          logInfo("scroll_to_upload_section", withTrace({
+            targetId: paymentSection.id || "payment-section",
+            action: "scroll",
+          }, traceId))
         } else {
           window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })
+          logWarn("scroll_to_upload_section", withTrace({
+            targetId: "not_found",
+            action: "fallback_scroll",
+          }, traceId))
         }
       }, 50)
       return
@@ -557,6 +643,10 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
       const result = await getUnpaidParticipants(publicCode)
       if (result.ok) {
         setUnpaidParticipants(result.participants)
+        
+        logInfo("payment_user_picker_open", withTrace({
+          unpaidUsersCount: result.participants.length,
+        }, traceId))
         
         // If no unpaid participants, show message
         if (result.participants.length === 0) {
@@ -613,6 +703,11 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
     if (selectedParticipant) {
       setPayingForParticipantId(selectedParticipantId)
       setPayingForParticipantName(selectedParticipant.display_name)
+      
+      logInfo("payment_user_selected", withTrace({
+        participantId: selectedParticipantId,
+        displayName: selectedParticipant.display_name,
+      }, traceId))
     }
 
     setMakePaymentDialogOpen(false)
@@ -622,9 +717,17 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
       const paymentSection = document.querySelector('[data-payment-section]')
       if (paymentSection) {
         paymentSection.scrollIntoView({ behavior: "smooth", block: "start" })
+        logInfo("scroll_to_upload_section", withTrace({
+          targetId: paymentSection.id || "payment-section",
+          action: "scroll",
+        }, traceId))
       } else {
         // Fallback: scroll to bottom where payment section should be
         window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })
+        logWarn("scroll_to_upload_section", withTrace({
+          targetId: "not_found",
+          action: "fallback_scroll",
+        }, traceId))
       }
     }, 150)
   }
@@ -635,6 +738,15 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
 
   return (
     <>
+      <DebugPanel
+        publicCode={publicCode}
+        hostSlug={urlHostSlug}
+        sessionId={session.id}
+        userId={authUser?.id || null}
+        guestKey={guestKey}
+        lastTraceId={lastTraceId}
+        lastJoinError={lastJoinError}
+      />
       {/* Back to Analytics Button - only show if from analytics */}
       {fromAnalytics && (
         <div className="fixed top-16 left-4 z-50">

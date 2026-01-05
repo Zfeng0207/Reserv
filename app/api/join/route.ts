@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient, createAdminClient } from "@/lib/supabase/server/server"
-import { log } from "@/lib/logger"
+import { log, logInfo, logWarn, logError, withTrace, debugEnabled } from "@/lib/logger"
 
 // Explicitly use Node.js runtime (not Edge) for Supabase compatibility
 export const runtime = "nodejs"
@@ -8,6 +8,19 @@ export const runtime = "nodejs"
 export async function POST(req: Request) {
   const traceId = req.headers.get("x-trace-id") ?? `join_${Date.now()}`
   const startedAt = Date.now()
+  
+  // Log request start
+  const origin = req.headers.get("origin") || "unknown"
+  const userAgent = req.headers.get("user-agent") || "unknown"
+  const hasAuthHeader = !!req.headers.get("authorization")
+  
+  logInfo("join_api_start", withTrace({
+    method: req.method,
+    url: req.url,
+    origin,
+    userAgent: userAgent.substring(0, 100), // Truncate for logs
+    hasAuthHeader,
+  }, traceId))
 
   // Ensure we always return JSON, never HTML
   const jsonResponse = (data: any, status: number = 200) => {
@@ -24,10 +37,10 @@ export async function POST(req: Request) {
     try {
       body = await req.json()
     } catch (parseError: any) {
-      log("error", "join_request_parse_failed", {
-        traceId,
+      logError("join_request_parse_failed", withTrace({
         error: parseError?.message,
-      })
+        stage: "request_parse",
+      }, traceId))
       return jsonResponse(
         { error: "Invalid request body", traceId },
         400
@@ -35,13 +48,14 @@ export async function POST(req: Request) {
     }
     const { publicCode, name, phone, guestKey } = body ?? {}
 
-    log("info", "join_request", {
-      traceId,
+    logInfo("join_request", withTrace({
       publicCode,
       hasName: !!name,
+      nameLength: name?.length || 0,
       hasPhone: !!phone,
       hasGuestKey: !!guestKey,
-    })
+      bodyParsed: debugEnabled() ? body : { publicCode, hasName: !!name, hasPhone: !!phone, hasGuestKey: !!guestKey },
+    }, traceId))
 
     if (!publicCode || typeof publicCode !== "string") {
       log("warn", "join_bad_request", { traceId, reason: "missing_publicCode" })
@@ -71,18 +85,13 @@ export async function POST(req: Request) {
         hasAnonKey: !!supabaseAnonKey,
         hasServiceRoleKey: !!serviceRoleKey,
       })
-      return NextResponse.json(
+      return jsonResponse(
         { 
           error: "Server configuration error", 
           detail: "Missing required Supabase environment variables. Please check Vercel environment variables.",
           traceId 
         },
-        { 
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-          }
-        }
+        500
       )
     }
     
@@ -99,18 +108,13 @@ export async function POST(req: Request) {
         error: clientError?.message,
         stack: clientError?.stack,
       })
-      return NextResponse.json(
+      return jsonResponse(
         { 
           error: "Server configuration error", 
           detail: "Failed to create Supabase client.",
           traceId 
         },
-        { 
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-          }
-        }
+        500
       )
     }
     
@@ -122,28 +126,22 @@ export async function POST(req: Request) {
         error: adminError?.message,
         stack: adminError?.stack,
       })
-      return NextResponse.json(
+      return jsonResponse(
         { 
           error: "Server configuration error", 
           detail: "Failed to create admin client.",
           traceId 
         },
-        { 
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-          }
-        }
+        500
       )
     }
 
     // Log Supabase configuration (host only, not full keys) for debugging
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     log("info", "join_supabase_config", {
       traceId,
       supabaseHost: supabaseUrl ? new URL(supabaseUrl).hostname : "missing",
       hasServiceRoleKey: !!serviceRoleKey,
-      hasAnonKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      hasAnonKey: !!supabaseAnonKey,
       runtime: "nodejs",
     })
 
@@ -174,13 +172,13 @@ export async function POST(req: Request) {
         details: (sessionRes.error as any)?.details,
         hint: (sessionRes.error as any)?.hint,
       })
-      return NextResponse.json(
+      return jsonResponse(
         {
           error: "Session lookup failed",
           detail: sessionRes.error.message,
           traceId,
         },
-        { status: 500 }
+        500
       )
     }
 
@@ -190,9 +188,9 @@ export async function POST(req: Request) {
         publicCode,
         reason: "no_rows_returned",
       })
-      return NextResponse.json(
+      return jsonResponse(
         { error: "Session not found", traceId, publicCode },
-        { status: 404 }
+        404
       )
     }
 
@@ -203,18 +201,18 @@ export async function POST(req: Request) {
         sessionId: sessionRes.data.id,
         status: sessionRes.data.status,
       })
-      return NextResponse.json(
+      return jsonResponse(
         { error: `Session is ${sessionRes.data.status}. Only open sessions can be joined.`, traceId },
-        { status: 409 }
+        409
       )
     }
 
     // 3) Validate guest key (must be provided from client)
     if (!guestKey || typeof guestKey !== "string") {
       log("warn", "join_bad_request", { traceId, reason: "missing_guestKey" })
-      return NextResponse.json(
+      return jsonResponse(
         { error: "Guest key is required", traceId },
-        { status: 400 }
+        400
       )
     }
     const finalGuestKey = guestKey
@@ -253,14 +251,22 @@ export async function POST(req: Request) {
           traceId,
           error: countError.message,
         })
-        return NextResponse.json(
-          { error: "Failed to check capacity", traceId },
-          { status: 500 }
-        )
+      return jsonResponse(
+        { error: "Failed to check capacity", traceId },
+        500
+      )
       }
 
       const isFull = sessionRes.data.capacity && count !== null && count >= sessionRes.data.capacity
       const waitlistEnabled = sessionRes.data.waitlist_enabled !== false
+
+      logInfo("join_capacity_check", withTrace({
+        capacity: sessionRes.data.capacity,
+        joinedCount: count,
+        isFull,
+        isClosed: sessionRes.data.status !== "open",
+        waitlistEnabled,
+      }, traceId))
 
       // If session is full and waitlist is enabled, keep them waitlisted
       // If session is full and waitlist is disabled, return error
@@ -269,17 +275,17 @@ export async function POST(req: Request) {
       if (isFull && waitlistEnabled) {
         newStatus = "waitlisted"
       } else if (isFull && !waitlistEnabled) {
-        log("warn", "join_capacity_exceeded_existing", {
-          traceId,
+        logWarn("join_capacity_exceeded_existing", withTrace({
           capacity: sessionRes.data.capacity,
           currentCount: count,
           waitlistEnabled,
           waitlistEnabledRaw: sessionRes.data.waitlist_enabled,
           reason: "waitlist_disabled",
-        })
-        return NextResponse.json(
+          stage: "capacity_check",
+        }, traceId))
+        return jsonResponse(
           { error: "Session is full", traceId, code: "CAPACITY_EXCEEDED" },
-          { status: 409 }
+          409
         )
       }
 
@@ -296,14 +302,18 @@ export async function POST(req: Request) {
         .select("id")
         .single()
 
-      log("info", "join_participant_update", {
-        traceId,
-        error: updateRes.error?.message,
-        errorCode: (updateRes.error as any)?.code,
-        participantId: updateRes.data?.id,
+      logInfo("join_participant_write_result", withTrace({
+        participantId: updateRes.data?.id || null,
+        rsvp_status: updateRes.data?.status || null,
+        payment_status: null,
+        error: updateRes.error?.message || null,
+        errorCode: updateRes.error ? (updateRes.error as any)?.code : null,
+        errorDetails: updateRes.error ? (updateRes.error as any)?.details : null,
+        hint: updateRes.error ? (updateRes.error as any)?.hint : null,
         newStatus,
         wasWaitlisted: existingParticipant.status === "waitlisted",
-      })
+        stage: "participant_update",
+      }, traceId))
 
       if (updateRes.error) {
         insertError = updateRes.error
@@ -311,9 +321,9 @@ export async function POST(req: Request) {
         participantId = updateRes.data.id
         // Return waitlisted response if they're still waitlisted
         if (newStatus === "waitlisted") {
-          return NextResponse.json(
+          return jsonResponse(
             { ok: true, traceId, participantId: updateRes.data.id, waitlisted: true },
-            { status: 200 }
+            200
           )
         }
       }
@@ -330,10 +340,10 @@ export async function POST(req: Request) {
           traceId,
           error: countError.message,
         })
-        return NextResponse.json(
-          { error: "Failed to check capacity", traceId },
-          { status: 500 }
-        )
+      return jsonResponse(
+        { error: "Failed to check capacity", traceId },
+        500
+      )
       }
 
       const isFull = sessionRes.data.capacity && count !== null && count >= sessionRes.data.capacity
@@ -351,6 +361,11 @@ export async function POST(req: Request) {
       if (isFull) {
         if (waitlistEnabled) {
           // Join waitlist instead
+          logInfo("join_participant_write_start", withTrace({
+            sessionId: sessionRes.data.id,
+            action: "insert_waitlist",
+          }, traceId))
+          
           // Use admin client to bypass RLS (we've already validated session is open)
           const waitlistRes = await adminSupabase
             .from("participants")
@@ -361,38 +376,42 @@ export async function POST(req: Request) {
               guest_key: finalGuestKey,
               status: "waitlisted",
             })
-            .select("id")
+            .select("id, status")
             .single()
 
-          log("info", "join_waitlist_insert", {
-            traceId,
-            error: waitlistRes.error?.message,
-            errorCode: (waitlistRes.error as any)?.code,
-            participantId: waitlistRes.data?.id,
+          logInfo("join_participant_write_result", withTrace({
+            participantId: waitlistRes.data?.id || null,
+            rsvp_status: waitlistRes.data?.status || null,
+            payment_status: null,
+            error: waitlistRes.error?.message || null,
+            errorCode: waitlistRes.error ? (waitlistRes.error as any)?.code : null,
+            errorDetails: waitlistRes.error ? (waitlistRes.error as any)?.details : null,
+            hint: waitlistRes.error ? (waitlistRes.error as any)?.hint : null,
             hasData: !!waitlistRes.data,
             hasError: !!waitlistRes.error,
-          })
+            stage: "waitlist_insert",
+          }, traceId))
 
           if (waitlistRes.error) {
             // Log full error details for production debugging
-            log("error", "join_waitlist_insert_error", {
-              traceId,
+            logError("join_waitlist_insert_error", withTrace({
               error: waitlistRes.error.message,
               code: (waitlistRes.error as any)?.code,
               details: (waitlistRes.error as any)?.details,
               hint: (waitlistRes.error as any)?.hint,
               sessionId: sessionRes.data.id,
-            })
+              stage: "waitlist_insert",
+            }, traceId))
             insertError = waitlistRes.error
           } else if (!waitlistRes.data) {
             // Edge case: no error but also no data
-            log("error", "join_waitlist_insert_no_data", {
-              traceId,
+            logError("join_waitlist_insert_no_data", withTrace({
               sessionId: sessionRes.data.id,
-            })
-            return NextResponse.json(
+              stage: "waitlist_insert",
+            }, traceId))
+            return jsonResponse(
               { error: "Failed to create waitlist entry", traceId },
-              { status: 500 }
+              500
             )
           } else {
             participantId = waitlistRes.data.id
@@ -400,9 +419,9 @@ export async function POST(req: Request) {
               traceId,
               participantId: waitlistRes.data.id,
             })
-            return NextResponse.json(
+            return jsonResponse(
               { ok: true, traceId, participantId: waitlistRes.data.id, waitlisted: true },
-              { status: 200 }
+              200
             )
           }
         } else {
@@ -414,7 +433,7 @@ export async function POST(req: Request) {
             waitlistEnabledRaw: sessionRes.data.waitlist_enabled,
             reason: "waitlist_disabled",
           })
-          return NextResponse.json(
+          return jsonResponse(
             { 
               error: "Session is full", 
               traceId, 
@@ -422,11 +441,16 @@ export async function POST(req: Request) {
               waitlistDisabled: true,
               message: "Session is full and waitlist is disabled. Please contact the host or enable waitlist for this session."
             },
-            { status: 409 }
+            409
           )
         }
       } else {
         // Insert new participant
+        logInfo("join_participant_write_start", withTrace({
+          sessionId: sessionRes.data.id,
+          action: "insert_confirmed",
+        }, traceId))
+        
         // Use admin client to bypass RLS (we've already validated session is open)
         const insertRes = await adminSupabase
           .from("participants")
@@ -466,9 +490,9 @@ export async function POST(req: Request) {
             traceId,
             sessionId: sessionRes.data.id,
           })
-          return NextResponse.json(
+          return jsonResponse(
             { error: "Failed to create participant", traceId },
-            { status: 500 }
+            500
           )
         } else {
           participantId = insertRes.data.id
@@ -500,7 +524,7 @@ export async function POST(req: Request) {
         guestKey: finalGuestKey,
       })
       
-      return NextResponse.json(
+      return jsonResponse(
         {
           error: isRLSError 
             ? "Permission denied. Please check your session permissions."
@@ -509,7 +533,7 @@ export async function POST(req: Request) {
           code: errorCode,
           traceId,
         },
-        { status: 403 }
+        403
       )
     }
 

@@ -8,6 +8,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/hooks/use-auth"
 import { TopNav } from "./top-nav"
 import { LoginDialog } from "./login-dialog"
+import { getCurrentReturnTo, setPostAuthRedirect } from "@/lib/post-auth-redirect"
 import {
   Calendar,
   MapPin,
@@ -35,6 +36,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
+import { logInfo, logError, newTraceId, withTrace } from "@/lib/logger"
 import { EditorBottomBar } from "./editor-bottom-bar"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { MobileCalendar } from "@/components/ui/mobile-calendar"
@@ -376,6 +378,8 @@ export function SessionInvite({
   waitlist = [],
   publicCode,
   hostSlug,
+  payingForParticipantId = null,
+  payingForParticipantName = null,
 }: SessionInviteProps) {
   console.log(`[SessionInvite] Render:`, { sessionId, initialCoverUrl, initialSport, initialEditMode, initialPreviewMode })
   
@@ -1257,9 +1261,23 @@ export function SessionInvite({
 
     if (typeof window === "undefined") return
 
+    const traceId = newTraceId("upload")
+    
     // Get guest key for participant identification
     const { getOrCreateGuestKey } = await import("@/lib/guest-key")
     const guestKey = getOrCreateGuestKey()
+
+    // Get participant ID from props or state (if available)
+    const participantIdForUpload = (typeof window !== "undefined" && (window as any).__payingForParticipantId) || null
+    
+    logInfo("upload_start", withTrace({
+      participantId: participantIdForUpload,
+      fileName: proofImageFile.name,
+      fileSize: proofImageFile.size,
+      mime: proofImageFile.type,
+      sessionId: actualSessionId,
+      guestKey,
+    }, traceId))
 
     setIsSubmittingProof(true)
 
@@ -1271,17 +1289,36 @@ export function SessionInvite({
         const base64Data = reader.result as string
 
         const { submitPaymentProof } = await import("@/app/session/[id]/actions")
-        const { getOrCreateGuestKey } = await import("@/lib/guest-key")
-        const guestKey = getOrCreateGuestKey()
+        
+        // Use participant ID from props
+        if (!payingForParticipantId) {
+          logError("upload_failed", withTrace({
+            error: "No participant ID provided",
+            stage: "validation",
+          }, traceId))
+          toast({
+            title: "Error",
+            description: "Please select who you're paying for first.",
+            variant: "destructive",
+          })
+          setIsSubmittingProof(false)
+          return
+        }
         
         const result = await submitPaymentProof(
           actualSessionId,
-          guestKey,
+          payingForParticipantId,
           base64Data,
           proofImageFile.name
         )
 
         if (result.ok) {
+          logInfo("upload_success", withTrace({
+            storagePath: result.storagePath || null,
+            publicUrl: result.publicUrl || null,
+            paymentProofId: result.paymentProofId,
+          }, traceId))
+          
           // Mark as submitted
           setProofSubmitted(true)
           const cacheKey = `sl:paymentSubmitted:${actualSessionId}`
@@ -1297,6 +1334,10 @@ export function SessionInvite({
           setProofImageFile(null)
           setProofImage(null)
         } else {
+          logError("upload_failed", withTrace({
+            error: result.error,
+            stage: "server_action",
+          }, traceId))
           toast({
             title: "Failed to submit payment proof",
             description: result.error,
@@ -1306,6 +1347,10 @@ export function SessionInvite({
         setIsSubmittingProof(false)
       }
       reader.onerror = () => {
+        logError("upload_failed", withTrace({
+          error: "FileReader error",
+          stage: "file_read",
+        }, traceId))
         toast({
           title: "Error reading file",
           description: "Please try again.",
@@ -1314,6 +1359,11 @@ export function SessionInvite({
         setIsSubmittingProof(false)
       }
     } catch (error: any) {
+      logError("upload_failed", withTrace({
+        error: error?.message || "Unknown error",
+        stack: error?.stack,
+        stage: "exception",
+      }, traceId))
       toast({
         title: "Failed to submit payment proof",
         description: error?.message || "Please try again.",
@@ -1597,6 +1647,10 @@ export function SessionInvite({
       // Store intent to publish after login
       if (typeof window !== "undefined") {
         sessionStorage.setItem("pending_publish", "true")
+        // Capture current URL for redirect after login
+        const { getCurrentReturnTo, setPostAuthRedirect } = await import("@/lib/post-auth-redirect")
+        const returnTo = getCurrentReturnTo()
+        setPostAuthRedirect(returnTo)
       }
       setLoginDialogOpen(true)
       return
@@ -1902,6 +1956,9 @@ export function SessionInvite({
       // Store intent to save draft after login
       if (typeof window !== "undefined") {
         sessionStorage.setItem("pending_save_draft", "true")
+        // Capture current URL for redirect after login
+        const returnTo = getCurrentReturnTo()
+        setPostAuthRedirect(returnTo)
       }
       setLoginDialogOpen(true)
       return

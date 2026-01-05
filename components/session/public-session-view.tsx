@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect, useRef, useMemo, Suspense } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useState, useEffect, useRef, useMemo, Suspense, useCallback } from "react"
+import { useRouter, useSearchParams, usePathname } from "next/navigation"
 import { SessionInvite } from "@/components/session-invite"
 import { GuestRSVPDialog } from "./guest-rsvp-dialog"
 import { LoginDialog } from "@/components/login-dialog"
@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { getOrCreateGuestKey, getGuestKey } from "@/lib/guest-key"
+import { createClient } from "@/lib/supabase/client"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
@@ -25,6 +26,7 @@ interface Participant {
   id: string
   display_name: string
   user_id?: string | null // Will be added via migration
+  status?: "invited" | "confirmed" | "cancelled" | "waitlisted" // Participant status
 }
 
 interface Session {
@@ -86,10 +88,45 @@ function getSportDisplayName(sport: string): string {
   return map[sport] || sport
 }
 
-function PublicSessionViewContent({ session, participants, waitlist = [], hostSlug: urlHostSlug }: PublicSessionViewProps) {
+// Compute session capacity state
+function computeSessionCapacityState(
+  session: Session,
+  participants: Participant[]
+): { capacity: number | null; joinedCount: number; isFull: boolean } {
+  const capacity = session.capacity
+  // Count only confirmed participants (exclude waitlisted, cancelled, etc.)
+  const joinedCount = participants.filter(
+    (p: any) => p.status === "confirmed"
+  ).length
+  
+  // Treat capacity null/0 as not full (unlimited or not set)
+  const isFull = capacity !== null && capacity > 0 && joinedCount >= capacity
+  
+  return { capacity, joinedCount, isFull }
+}
+
+function PublicSessionViewContent({ session, participants: initialParticipants, waitlist: initialWaitlist = [], hostSlug: urlHostSlug }: PublicSessionViewProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const pathname = usePathname()
   const { toast } = useToast()
+  
+  // Debug instrumentation: Log route changes and beforeunload events
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (debugEnabled()) {
+        console.log("[debug] beforeunload fired")
+      }
+    }
+    window.addEventListener("beforeunload", onBeforeUnload)
+    return () => window.removeEventListener("beforeunload", onBeforeUnload)
+  }, [])
+  
+  useEffect(() => {
+    if (debugEnabled()) {
+      console.log("[debug] route changed", { pathname, search: searchParams?.toString() })
+    }
+  }, [pathname, searchParams])
   const { isAuthenticated, user, authUser } = useAuth()
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
   const [rsvpDialogOpen, setRsvpDialogOpen] = useState(false)
@@ -100,6 +137,41 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
   const [guestKey, setGuestKey] = useState<string | null>(null)
   const [showSuccessMessage, setShowSuccessMessage] = useState(false)
   const [spotsLeft, setSpotsLeft] = useState<number | null>(null)
+  
+  // Local state for participants (can be updated optimistically)
+  const [participants, setParticipants] = useState<Participant[]>(initialParticipants)
+  const [waitlist, setWaitlist] = useState<Participant[]>(initialWaitlist)
+
+  // Debug: Log waitlist data
+  useEffect(() => {
+    console.log("[waitlist] state updated", {
+      initialWaitlistCount: initialWaitlist.length,
+      waitlistCount: waitlist.length,
+      waitlistItems: waitlist.map(p => ({ id: p.id, name: p.display_name, status: p.status }))
+    })
+  }, [waitlist, initialWaitlist])
+  
+  // Use refs to track previous values and only update when content actually changes
+  // This prevents infinite loops when props are recreated with same content
+  const prevParticipantsKeyRef = useRef<string>("")
+  const prevWaitlistKeyRef = useRef<string>("")
+  
+  // Sync with props when they change (e.g., from server revalidation)
+  // Only update if the actual content changed (compare by JSON stringified IDs)
+  useEffect(() => {
+    const participantsKey = JSON.stringify(initialParticipants.map(p => p.id).sort())
+    const waitlistKey = JSON.stringify(initialWaitlist.map(p => p.id).sort())
+    
+    if (participantsKey !== prevParticipantsKeyRef.current) {
+      setParticipants(initialParticipants)
+      prevParticipantsKeyRef.current = participantsKey
+    }
+    
+    if (waitlistKey !== prevWaitlistKeyRef.current) {
+      setWaitlist(initialWaitlist)
+      prevWaitlistKeyRef.current = waitlistKey
+    }
+  }, [initialParticipants, initialWaitlist])
   const [makePaymentDialogOpen, setMakePaymentDialogOpen] = useState(false)
   const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null)
   const [payingForParticipantId, setPayingForParticipantId] = useState<string | null>(null)
@@ -218,6 +290,19 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
     return null
   }, [participants, isAuthenticated, authUser?.id])
 
+  // Compute capacity state
+  const capacityState = useMemo(() => {
+    const state = computeSessionCapacityState(session, participants)
+    console.log("[capacity] computed state", {
+      capacity: state.capacity,
+      joinedCount: state.joinedCount,
+      isFull: state.isFull,
+      participantsCount: participants.length,
+      participantsWithStatus: participants.map(p => ({ id: p.id, status: (p as any).status }))
+    })
+    return state
+  }, [session, participants])
+
   // Convert participants to demo format for SessionInvite
   const demoParticipants = participants.map((p) => ({
     name: p.display_name,
@@ -228,11 +313,22 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
   // We'll keep this component's state for the dialog styling
 
   const handleRSVPContinue = async (name: string, phone: string | null) => {
+    const traceId = newTraceId("join")
+    setLastTraceId(traceId)
+    setLastJoinError(null)
+    
     try {
       if (!publicCode) {
+        const error = "Session is not published."
+        logError("join_failed_client", withTrace({ 
+          error,
+          stage: "validation",
+          reason: "missing_publicCode",
+        }, traceId))
+        setLastJoinError(error)
         toast({
           title: "Error",
-          description: "Session is not published.",
+          description: error,
           variant: "destructive",
         })
         return
@@ -244,9 +340,16 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
       setStoredParticipantInfo({ name, phone })
 
       if (!guestKey) {
+        const error = "Unable to identify device. Please refresh the page."
+        logError("join_failed_client", withTrace({ 
+          error,
+          stage: "validation",
+          reason: "missing_guestKey",
+        }, traceId))
+        setLastJoinError(error)
         toast({
           title: "Error",
-          description: "Unable to identify device. Please refresh the page.",
+          description: error,
           variant: "destructive",
         })
         return
@@ -408,6 +511,7 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
           traceId, 
           participantId: json?.participantId, 
           waitlisted: json?.waitlisted,
+          alreadyJoined: json?.alreadyJoined,
           hasParticipantId: !!json?.participantId,
           fullJson: json,
         })
@@ -424,30 +528,103 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         
         // Update state - waitlisted defaults to false if not present
         const isWaitlisted = json.waitlisted === true
-        setRsvpState(isWaitlisted ? "waitlisted" : "joined")
+        const isAlreadyJoined = json.alreadyJoined === true
+        const joinedAs = json.joinedAs || (isWaitlisted ? "waitlist" : "joined")
         
-        // Calculate spots left
-        const currentCount = participants.length
-        const capacity = session.capacity
-        const remaining = capacity ? Math.max(0, capacity - currentCount - 1) : null
-        setSpotsLeft(remaining)
-        
-        // Show success message
-        setShowSuccessMessage(true)
-        
-        // Show success toast
-        toast({
-          title: isWaitlisted ? "You're on the waitlist! ✅" : "You're in! 🎉",
-          description: isWaitlisted 
-            ? "We'll notify you if a spot opens up."
-            : "Your name is now visible to the group.",
-          variant: "default",
+        console.log("[waitlist] API response parsed", {
+          json,
+          isWaitlisted,
+          isAlreadyJoined,
+          joinedAs,
+          jsonWaitlisted: json.waitlisted,
+          jsonJoinedAs: json.joinedAs
         })
         
-        // Refresh the page after a short delay to show updated participant list
+        setRsvpState(isWaitlisted ? "waitlisted" : "joined")
+        
+        // Optimistically update participants list (NO PAGE REFRESH)
+        if (json.participantId && !isAlreadyJoined) {
+          // Add new participant to the appropriate list
+          const newParticipant: Participant = {
+            id: json.participantId,
+            display_name: name, // Use the name from the join request
+            status: joinedAs === "waitlist" ? "waitlisted" : "confirmed",
+          }
+          
+          if (joinedAs === "waitlist") {
+            console.log("[waitlist] optimistically adding to waitlist", { participant: newParticipant, joinedAs })
+            setWaitlist((prev) => {
+              const updated = [...prev, newParticipant]
+              console.log("[waitlist] waitlist state updated", { prevCount: prev.length, newCount: updated.length, items: updated })
+              return updated
+            })
+          } else {
+            setParticipants((prev) => [...prev, newParticipant])
+          }
+        }
+        
+        // Calculate spots left (use updated participants count)
+        const updatedParticipants = joinedAs === "waitlist" ? participants : (json.participantId && !isAlreadyJoined ? [...participants, { id: json.participantId, display_name: name, status: "confirmed" as const }] : participants)
+        const currentCount = updatedParticipants.filter((p: any) => p.status === "confirmed").length
+        const capacity = session.capacity
+        const remaining = capacity ? Math.max(0, capacity - currentCount) : null
+        setSpotsLeft(remaining)
+        
+        // Show success message (persistent card, no toast popup)
+        setShowSuccessMessage(true)
+        
+        // Refetch participants from client (without router.refresh or page reload)
+        // This ensures we have the latest data without a full page refresh
+        const refetchParticipants = async () => {
+          try {
+            console.log("[waitlist] refetching participants", { sessionId: session.id, traceId })
+            const supabase = createClient()
+            const { data: allParticipants, error } = await supabase
+              .from("participants")
+              .select("id, display_name, status")
+              .eq("session_id", session.id)
+              .in("status", ["confirmed", "waitlisted"])
+              .order("created_at", { ascending: true })
+            
+            console.log("[waitlist] refetch result", {
+              error: error?.message,
+              allParticipantsCount: allParticipants?.length || 0,
+              allParticipants: allParticipants?.map(p => ({ id: p.id, name: p.display_name, status: p.status }))
+            })
+            
+            if (!error && allParticipants) {
+              const confirmed = allParticipants.filter((p: any) => p.status === "confirmed")
+              const waitlisted = allParticipants.filter((p: any) => p.status === "waitlisted")
+              
+              console.log("[waitlist] after filtering", {
+                confirmedCount: confirmed.length,
+                waitlistedCount: waitlisted.length,
+                confirmed: confirmed.map(p => ({ id: p.id, name: p.display_name, status: p.status })),
+                waitlisted: waitlisted.map(p => ({ id: p.id, name: p.display_name, status: p.status }))
+              })
+              
+              setParticipants(confirmed)
+              setWaitlist(waitlisted)
+              
+              // Recalculate spots left with fresh data
+              const freshCount = confirmed.length
+              const freshRemaining = capacity ? Math.max(0, capacity - freshCount) : null
+              setSpotsLeft(freshRemaining)
+              logInfo("join_refetch_success", withTrace({ confirmedCount: confirmed.length, waitlistCount: waitlisted.length }, traceId))
+            } else {
+              console.error("[waitlist] refetch error", { error: error?.message, errorCode: (error as any)?.code })
+              logError("join_refetch_failed", withTrace({ error: error?.message }, traceId))
+            }
+          } catch (error: any) {
+            console.error("[waitlist] refetch exception", { error: error.message, stack: error.stack })
+            logError("join_refetch_exception", withTrace({ error: error.message }, traceId))
+          }
+        }
+        
+        // Refetch after a short delay to get server truth (NO PAGE RELOAD)
         setTimeout(() => {
-          window.location.reload()
-        }, 1500)
+          refetchParticipants()
+        }, 500)
         
         // Auto-hide success message after 3 seconds
         setTimeout(() => {
@@ -507,10 +684,16 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
 
   // Handle continue as guest from login dialog
   const handleContinueAsGuest = (name: string) => {
-    // Close login dialog and open RSVP dialog with name pre-filled
+    // Close login dialog and open GuestRSVPDialog directly
+    // GuestRSVPDialog will handle name + phone collection and localStorage
     setLoginDialogOpen(false)
-    // Store the name temporarily and open RSVP dialog
-    setStoredParticipantInfo({ name, phone: null })
+    
+    // If name was provided (shouldn't happen now, but keep for compatibility),
+    // pre-fill it. Otherwise GuestRSVPDialog will read from localStorage
+    if (name) {
+      setStoredParticipantInfo({ name, phone: null })
+    }
+    
     // Small delay to ensure login dialog closes before RSVP dialog opens
     setTimeout(() => {
     setRsvpDialogOpen(true)
@@ -678,6 +861,11 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         })
       }
     } catch (error: any) {
+      logError("make_payment_failed", withTrace({
+        error: error?.message || "Failed to load participants",
+        stack: error?.stack,
+        stage: "get_unpaid_participants",
+      }, traceId))
       toast({
         title: "Error",
         description: error?.message || "Failed to load participants.",
@@ -798,6 +986,8 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         onMakePaymentClick={handleMakePaymentClick}
         payingForParticipantId={payingForParticipantId}
         payingForParticipantName={payingForParticipantName}
+        isFull={capacityState.isFull}
+        joinedCount={capacityState.joinedCount}
       />
 
       {/* Login/Guest Dialog - shown first */}

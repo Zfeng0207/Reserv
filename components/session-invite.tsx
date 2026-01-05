@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { cn } from "@/lib/utils"
-import { useState, useEffect, useLayoutEffect, useRef } from "react"
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react"
 import { motion, AnimatePresence, LayoutGroup, useMotionValue, useTransform, animate } from "framer-motion"
 import { useRouter, usePathname, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/hooks/use-auth"
@@ -28,6 +28,7 @@ import {
   Sparkles,
   Eye,
   EyeOff,
+  AlertTriangle,
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -131,6 +132,8 @@ interface SessionInviteProps {
   onMakePaymentClick?: () => void // Handler for make payment button
   payingForParticipantId?: string | null // ID of participant being paid for
   payingForParticipantName?: string | null // Name of participant being paid for
+  isFull?: boolean // Whether the session is at capacity
+  joinedCount?: number // Number of confirmed participants
 }
 
 // Swipe to Join Slider Component (iPhone-style)
@@ -380,9 +383,9 @@ export function SessionInvite({
   hostSlug,
   payingForParticipantId = null,
   payingForParticipantName = null,
+  isFull = false,
+  joinedCount = 0,
 }: SessionInviteProps) {
-  console.log(`[SessionInvite] Render:`, { sessionId, initialCoverUrl, initialSport, initialEditMode, initialPreviewMode })
-  
   // Detect if this is an empty/new session
   const isEmptySession = !sessionId || sessionId === "new" || sessionId === "edit"
   
@@ -674,6 +677,30 @@ export function SessionInvite({
   const [eventCourt, setEventCourt] = useState(initialCourt || "")
   const [containerOverlayEnabled, setContainerOverlayEnabled] = useState(initialContainerOverlayEnabled ?? true)
 
+  // Debug logging for capacity state (public view only)
+  useEffect(() => {
+    if (!isEditMode && !isPreviewMode) {
+      console.log(`[SessionInvite] Capacity state:`, { 
+        isFull,
+        joinedCount,
+        initialCapacity,
+        eventCapacity,
+        sessionId
+      })
+    }
+  }, [isFull, joinedCount, initialCapacity, eventCapacity, sessionId, isEditMode, isPreviewMode])
+
+  // Debug logging for waitlist (public view only)
+  useEffect(() => {
+    if (!isEditMode && !isPreviewMode) {
+      console.log(`[SessionInvite] Waitlist state:`, { 
+        waitlistLength: waitlist?.length || 0,
+        waitlistItems: waitlist?.map(p => ({ id: p.id, name: p.display_name })) || [],
+        waitlistProp: waitlist
+      })
+    }
+  }, [waitlist, isEditMode, isPreviewMode])
+
   // Sync eventCourt when initialCourt prop changes (e.g., when session data loads)
   useEffect(() => {
     if (initialCourt !== undefined && initialCourt !== null) {
@@ -895,6 +922,164 @@ export function SessionInvite({
     glow: false,
     vignette: true,
   })
+
+  // Draft persistence key
+  const draftKey = useMemo(() => {
+    if (isEmptySession) {
+      return "reserv:editDraft:new"
+    }
+    if (actualSessionId && actualSessionId !== "new" && actualSessionId !== "edit") {
+      return `reserv:editDraft:${actualSessionId}`
+    }
+    // Fallback: use publicCode if available, otherwise "new"
+    if (publicCode) {
+      return `reserv:editDraft:${publicCode}`
+    }
+    return "reserv:editDraft:new"
+  }, [isEmptySession, actualSessionId, publicCode])
+
+  // Draft auto-save debounce ref
+  const draftSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [draftRestored, setDraftRestored] = useState(false)
+
+  // Restore draft on mount (only once, before first render if possible)
+  useLayoutEffect(() => {
+    if (!isEditMode || isPreviewMode || draftRestored) return
+
+    try {
+      const stored = localStorage.getItem(draftKey)
+      if (stored) {
+        const draft = JSON.parse(stored)
+        console.log("[draft] restored", { key: draftKey, updatedAt: draft.updatedAt })
+
+        // Restore all form fields
+        if (draft.eventTitle !== undefined) setEventTitle(draft.eventTitle || "")
+        if (draft.titleFont !== undefined) setTitleFont(draft.titleFont || "Classic")
+        if (draft.eventDate !== undefined) setEventDate(draft.eventDate || "")
+        if (draft.selectedDateDraft !== undefined) setSelectedDateDraft(draft.selectedDateDraft ? new Date(draft.selectedDateDraft) : null)
+        if (draft.selectedTimeDraft !== undefined) setSelectedTimeDraft(draft.selectedTimeDraft || { hour: 9, minute: 0, ampm: "AM" })
+        if (draft.selectedDurationDraft !== undefined) setSelectedDurationDraft(draft.selectedDurationDraft || 2)
+        if (draft.eventLocation !== undefined) setEventLocation(draft.eventLocation || "")
+        if (draft.locationDraft !== undefined) setLocationDraft(draft.locationDraft || "")
+        if (draft.mapUrlDraft !== undefined) setMapUrlDraft(draft.mapUrlDraft || "")
+        if (draft.courtDraft !== undefined) setCourtDraft(draft.courtDraft || "")
+        if (draft.eventCourt !== undefined) setEventCourt(draft.eventCourt || "")
+        if (draft.eventPrice !== undefined) setEventPrice(draft.eventPrice ?? 0)
+        if (draft.eventCapacity !== undefined) setEventCapacity(draft.eventCapacity ?? 0)
+        if (draft.hostNameInput !== undefined) setHostNameInput(draft.hostNameInput || "")
+        if (draft.selectedSport !== undefined) setSelectedSport(draft.selectedSport || "Badminton")
+        if (draft.eventDescription !== undefined) setEventDescription(draft.eventDescription || "")
+        if (draft.optimisticCoverUrl !== undefined) setOptimisticCoverUrl(draft.optimisticCoverUrl || null)
+        if (draft.containerOverlayEnabled !== undefined) setContainerOverlayEnabled(draft.containerOverlayEnabled ?? true)
+        if (draft.bankName !== undefined) setBankName(draft.bankName || "")
+        if (draft.accountNumber !== undefined) setAccountNumber(draft.accountNumber || "")
+        if (draft.accountName !== undefined) setAccountName(draft.accountName || "")
+        if (draft.paymentNotes !== undefined) setPaymentNotes(draft.paymentNotes || "")
+        if (draft.paymentQrImage !== undefined) setPaymentQrImage(draft.paymentQrImage || null)
+        if (draft.theme !== undefined) setTheme(draft.theme || "badminton")
+        if (draft.effects !== undefined) setEffects(draft.effects || { grain: true, glow: false, vignette: false })
+
+        setDraftRestored(true)
+        
+        // Show toast notification
+        toast({
+          title: "Draft restored",
+          description: "Your previous edits have been restored.",
+          variant: "default",
+        })
+      } else {
+        setDraftRestored(true) // Mark as checked even if no draft found
+      }
+    } catch (error) {
+      console.error("[draft] restore failed", { key: draftKey, error })
+      setDraftRestored(true) // Mark as checked even on error
+    }
+  }, [isEditMode, isPreviewMode, draftKey, draftRestored, toast])
+
+  // Auto-save draft (debounced)
+  useEffect(() => {
+    if (!isEditMode || isPreviewMode || !draftRestored) return
+
+    // Clear existing timeout
+    if (draftSaveTimeoutRef.current) {
+      clearTimeout(draftSaveTimeoutRef.current)
+    }
+
+    // Set new timeout for debounced save
+    draftSaveTimeoutRef.current = setTimeout(() => {
+      try {
+        const draft = {
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          eventTitle,
+          titleFont,
+          eventDate,
+          selectedDateDraft: selectedDateDraft ? selectedDateDraft.toISOString() : null,
+          selectedTimeDraft,
+          selectedDurationDraft,
+          eventLocation,
+          locationDraft,
+          mapUrlDraft,
+          courtDraft,
+          eventCourt,
+          eventPrice,
+          eventCapacity,
+          hostNameInput,
+          selectedSport,
+          eventDescription,
+          optimisticCoverUrl,
+          containerOverlayEnabled,
+          bankName,
+          accountNumber,
+          accountName,
+          paymentNotes,
+          paymentQrImage,
+          theme,
+          effects,
+        }
+        localStorage.setItem(draftKey, JSON.stringify(draft))
+        console.log("[draft] autosaved", { key: draftKey })
+      } catch (error) {
+        console.error("[draft] autosave failed", { key: draftKey, error })
+      }
+    }, 300) // 300ms debounce
+
+    return () => {
+      if (draftSaveTimeoutRef.current) {
+        clearTimeout(draftSaveTimeoutRef.current)
+      }
+    }
+  }, [
+    isEditMode,
+    isPreviewMode,
+    draftRestored,
+    draftKey,
+    eventTitle,
+    titleFont,
+    eventDate,
+    selectedDateDraft,
+    selectedTimeDraft,
+    selectedDurationDraft,
+    eventLocation,
+    locationDraft,
+    mapUrlDraft,
+    courtDraft,
+    eventCourt,
+    eventPrice,
+    eventCapacity,
+    hostNameInput,
+    selectedSport,
+    eventDescription,
+    optimisticCoverUrl,
+    containerOverlayEnabled,
+    bankName,
+    accountNumber,
+    accountName,
+    paymentNotes,
+    paymentQrImage,
+    theme,
+    effects,
+  ])
 
   // Handle sport change - only update sport and theme, NOT cover
   const handleSportChange = (sport: string) => {
@@ -1643,18 +1828,22 @@ export function SessionInvite({
     const validation = validateBeforePublish()
     if (!validation.ok) return
 
-    if (!isAuthenticated) {
-      // Store intent to publish after login
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem("pending_publish", "true")
-        // Capture current URL for redirect after login
-        const { getCurrentReturnTo, setPostAuthRedirect } = await import("@/lib/post-auth-redirect")
-        const returnTo = getCurrentReturnTo()
-        setPostAuthRedirect(returnTo)
+      if (!isAuthenticated) {
+        // Store intent to publish after login
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("pending_publish", "true")
+          // Capture current URL for redirect after login
+          const { getCurrentUrl, setReturnTo } = await import("@/lib/return-to")
+          const { getCurrentReturnTo, setPostAuthRedirect } = await import("@/lib/post-auth-redirect")
+          const returnTo = getCurrentUrl()
+          setReturnTo(returnTo)
+          // Also set post-auth redirect for compatibility
+          setPostAuthRedirect(returnTo)
+          console.log("[auth] setReturnTo from publish", { url: returnTo })
+        }
+        setLoginDialogOpen(true)
+        return
       }
-      setLoginDialogOpen(true)
-      return
-    }
 
     // Check if session is live (status === "open")
     const isLive = sessionStatus === "open"
@@ -1815,6 +2004,14 @@ export function SessionInvite({
           }
         }
 
+        // Clear draft on successful publish
+        try {
+          localStorage.removeItem(draftKey)
+          console.log("[draft] cleared on publish", { key: draftKey })
+        } catch (error) {
+          console.error("[draft] clear failed", { key: draftKey, error })
+        }
+
         // Open share sheet immediately (don't navigate yet - navigation will happen after sheet closes)
         // Store sessionId for share sheet to use in preview navigation
         setPublishShareSheetOpen(true)
@@ -1953,12 +2150,53 @@ export function SessionInvite({
   // Handle save draft click
   const handleSaveDraftClick = async () => {
     if (!isAuthenticated) {
-      // Store intent to save draft after login
+      // Force save draft immediately (no debounce) before login
       if (typeof window !== "undefined") {
+        try {
+          const draft = {
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            eventTitle,
+            titleFont,
+            eventDate,
+            selectedDateDraft: selectedDateDraft ? selectedDateDraft.toISOString() : null,
+            selectedTimeDraft,
+            selectedDurationDraft,
+            eventLocation,
+            locationDraft,
+            mapUrlDraft,
+            courtDraft,
+            eventCourt,
+            eventPrice,
+            eventCapacity,
+            hostNameInput,
+            selectedSport,
+            eventDescription,
+            optimisticCoverUrl,
+            containerOverlayEnabled,
+            bankName,
+            accountNumber,
+            accountName,
+            paymentNotes,
+            paymentQrImage,
+            theme,
+            effects,
+          }
+          localStorage.setItem(draftKey, JSON.stringify(draft))
+          console.log("[draft] force saved before login", { key: draftKey })
+        } catch (error) {
+          console.error("[draft] force save failed", { key: draftKey, error })
+        }
+        
         sessionStorage.setItem("pending_save_draft", "true")
         // Capture current URL for redirect after login
-        const returnTo = getCurrentReturnTo()
+        const { getCurrentUrl, setReturnTo } = await import("@/lib/return-to")
+        const { getCurrentReturnTo, setPostAuthRedirect } = await import("@/lib/post-auth-redirect")
+        const returnTo = getCurrentUrl()
+        setReturnTo(returnTo)
+        // Also set post-auth redirect for compatibility
         setPostAuthRedirect(returnTo)
+        console.log("[auth] setReturnTo from save draft", { url: returnTo })
       }
       setLoginDialogOpen(true)
       return
@@ -2810,9 +3048,18 @@ export function SessionInvite({
                         </div>
                         <div className="flex items-start gap-3">
                           <Users className={cn("w-5 h-5 text-white/60 mt-0.5", (!isEditMode || isPreviewMode) && HERO_ICON_SHADOW)} />
-                          <p className={cn("text-base text-white", (!eventCapacity || eventCapacity === 0) && "italic opacity-60", (!isEditMode || isPreviewMode) && HERO_META_SHADOW)}>
-                            {eventCapacity && eventCapacity > 0 ? `${eventCapacity} spots total` : "Enter number of spots"}
-                          </p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className={cn("text-base text-white", (!eventCapacity || eventCapacity === 0) && "italic opacity-60", (!isEditMode || isPreviewMode) && HERO_META_SHADOW)}>
+                              {eventCapacity && eventCapacity > 0 ? `${eventCapacity} spots total` : "Enter number of spots"}
+                            </p>
+                            {/* FULL badge when session is at capacity (public view only) */}
+                            {!isEditMode && !isPreviewMode && isFull && (
+                              <Badge className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-red-500/20 text-red-200 border border-red-500/30 backdrop-blur">
+                                <AlertTriangle className="w-3 h-3" />
+                                FULL
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -2955,9 +3202,17 @@ export function SessionInvite({
               <Card className={`${glassCard} p-6`}>
                 <div className="flex items-center justify-between mb-2">
                   <h2 className={`text-lg font-semibold ${strongText}`}>Going</h2>
-                  <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30">
-                    {demoParticipants.length} / {eventCapacity}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30">
+                      {joinedCount > 0 ? joinedCount : demoParticipants.length} / {eventCapacity || "∞"}
+                    </Badge>
+                    {isFull && eventCapacity && eventCapacity > 0 && (
+                      <Badge className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-red-500/20 text-red-200 border border-red-500/30 backdrop-blur">
+                        <AlertTriangle className="w-3 h-3" />
+                        Full
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 {demoParticipants.length === 0 ? (
                   <p className={`text-sm ${mutedText} px-1`}>No one has joined so far.</p>
@@ -2997,38 +3252,39 @@ export function SessionInvite({
                     })}
                   </div>
                 )}
-              </Card>
-            </motion.div>
-          )}
 
-          {/* Waiting List Card - only show on public invite (not preview/edit) */}
-          {!isEditMode && !isPreviewMode && waitlist.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: 0.4 }}
-            >
-              <Card className={`${glassCard} p-6`}>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className={`text-sm font-medium ${mutedText}`}>Waitlist</h3>
-                  <Badge className="bg-amber-500/10 text-amber-400/70 border-amber-500/20 text-xs">
-                    {waitlist.length}
-                  </Badge>
-                </div>
-                <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-                  {waitlist.map((participant) => (
-                    <div
-                      key={participant.id}
-                      className={cn(
-                        "px-3 py-1.5 rounded-full whitespace-nowrap",
-                        "bg-white/5 border border-white/10",
-                        "text-xs text-white/70"
-                      )}
-                    >
-                      {participant.display_name}
+                {/* Waitlist section - shown below joined participants */}
+                {!isEditMode && !isPreviewMode && waitlist && waitlist.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-white/10">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className={cn("text-xs font-medium uppercase tracking-wide", mutedText)}>Waitlist</h3>
+                      <Badge className={cn(
+                        "text-[10px] px-1.5 py-0.5",
+                        uiMode === "dark" 
+                          ? "bg-amber-500/10 text-amber-400/60 border-amber-500/20" 
+                          : "bg-amber-500/10 text-amber-600/70 border-amber-500/20"
+                      )}>
+                        {waitlist.length}
+                      </Badge>
                     </div>
-                  ))}
-                </div>
+                    <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
+                      {waitlist.map((participant) => (
+                        <div
+                          key={participant.id}
+                          className={cn(
+                            "px-3 py-1.5 rounded-full whitespace-nowrap flex-shrink-0",
+                            "text-xs font-medium",
+                            uiMode === "dark"
+                              ? "bg-white/5 border border-white/10 text-white/60"
+                              : "bg-black/5 border border-black/10 text-black/60"
+                          )}
+                        >
+                          {participant.display_name}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </Card>
             </motion.div>
           )}
@@ -3920,11 +4176,24 @@ export function SessionInvite({
                 <div className="flex justify-center items-center gap-2 w-full">
                   {/* Swipe to Join Slider */}
                   <SwipeToJoinSlider
-                    onJoin={onJoinClick || (() => {})}
+                    onJoin={() => {
+                      // Log waitlist intent when session is full
+                      if (isFull && publicCode) {
+                        console.log("[waitlist] session full → user attempting waitlist join", {
+                          publicCode,
+                          capacity: eventCapacity,
+                          joinedCount,
+                        })
+                      }
+                      // Call the original join handler
+                      if (onJoinClick) {
+                        onJoinClick()
+                      }
+                    }}
                     disabled={isPreviewMode}
                     uiMode={uiMode}
                     isPreviewMode={isPreviewMode}
-                    label="Join session"
+                    label={isFull ? "Join waitlist" : "Join session"}
                     isJoined={String(rsvpState) === "joined"}
                   />
                   {actualSessionId && !demoMode && (

@@ -9,9 +9,12 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
-import { Ban, CheckCircle2, Clock, Calendar, DollarSign, Users, ChevronRight } from "lucide-react"
+import { logInfo, logError, logWarn, newTraceId, withTrace } from "@/lib/logger"
+import { Ban, CheckCircle2, Clock, Calendar, DollarSign, Users, ChevronRight, Plus, X } from "lucide-react"
 import { formatDistanceToNow, format, isPast, isFuture, parseISO } from "date-fns"
 import { CopyInviteLinkButton } from "@/components/common/copy-invite-link-button"
 import { SaveDraftGuardModal } from "@/components/host/save-draft-guard-modal"
@@ -56,6 +59,15 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
   const [loading, setLoading] = useState(true)
   const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false)
   const [isUnpublishing, setIsUnpublishing] = useState(false)
+  
+  // Add/Remove participant state
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false)
+  const [participantToRemove, setParticipantToRemove] = useState<{ id: string; name: string } | null>(null)
+  const [newParticipantName, setNewParticipantName] = useState("")
+  const [newParticipantPhone, setNewParticipantPhone] = useState("")
+  const [isAdding, setIsAdding] = useState(false)
+  const [isRemoving, setIsRemoving] = useState(false)
 
   // Check if we should show payments view
   const mode = searchParams.get("mode")
@@ -111,6 +123,212 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
 
     fetchAnalytics()
   }, [sessionId])
+
+  // Refetch analytics after add/remove
+  const refetchAnalytics = async () => {
+    try {
+      const { getSessionAnalytics } = await import("@/app/host/sessions/[id]/actions")
+      const result = await getSessionAnalytics(sessionId)
+      if (result.ok) {
+        setAnalytics({
+          attendance: result.attendance,
+          payments: result.payments,
+          acceptedList: result.acceptedList,
+          declinedList: result.declinedList,
+          viewedCount: result.viewedCount,
+          pricePerPerson: result.pricePerPerson,
+          sessionStatus: result.sessionStatus,
+          startAt: result.startAt,
+          hostSlug: result.hostSlug,
+          publicCode: result.publicCode,
+          waitlistEnabled: result.waitlistEnabled,
+        })
+      }
+    } catch (error) {
+      console.error("Failed to refetch analytics:", error)
+    }
+  }
+
+  // Handle add participant
+  const handleAddParticipant = async () => {
+    const traceId = newTraceId("attendee_add")
+    const trimmedName = newParticipantName.trim()
+    
+    if (!trimmedName || trimmedName.length === 0) {
+      toast({
+        title: "Name required",
+        description: "Please enter a name for the attendee.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsAdding(true)
+    logInfo("attendee_add_submit", withTrace({
+      sessionId,
+      hasName: !!trimmedName,
+      hasPhone: !!newParticipantPhone.trim(),
+    }, traceId))
+
+    try {
+      const { addParticipant } = await import("@/app/host/sessions/[id]/actions")
+      const result = await addParticipant(sessionId, trimmedName, newParticipantPhone.trim() || null)
+      
+      if (!result.ok) {
+        logError("attendee_add_failed", withTrace({
+          error: result.error,
+          sessionId,
+        }, traceId))
+        toast({
+          title: "Failed to add attendee",
+          description: result.error || "Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      logInfo("attendee_add_success", withTrace({
+        participantId: result.participantId,
+        sessionId,
+      }, traceId))
+
+      // Optimistic update
+      if (analytics) {
+        setAnalytics({
+          ...analytics,
+          attendance: {
+            ...analytics.attendance,
+            accepted: analytics.attendance.accepted + 1,
+          },
+          acceptedList: [
+            ...analytics.acceptedList,
+            {
+              id: result.participantId,
+              display_name: trimmedName,
+              created_at: new Date().toISOString(),
+            },
+          ],
+        })
+      }
+
+      toast({
+        title: "Attendee added",
+        description: `${trimmedName} has been added to the session.`,
+      })
+
+      // Reset form and close dialog
+      setNewParticipantName("")
+      setNewParticipantPhone("")
+      setAddDialogOpen(false)
+
+      // Refetch to ensure consistency
+      await refetchAnalytics()
+    } catch (error: any) {
+      logError("attendee_add_failed", withTrace({
+        error: error?.message || "Unknown error",
+        sessionId,
+      }, traceId))
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to add attendee. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsAdding(false)
+    }
+  }
+
+  // Handle remove participant
+  const handleRemoveParticipant = async () => {
+    if (!participantToRemove) return
+
+    const traceId = newTraceId("attendee_remove")
+    setIsRemoving(true)
+    logInfo("attendee_remove_confirm", withTrace({
+      participantId: participantToRemove.id,
+      sessionId,
+    }, traceId))
+
+    try {
+      const { removeParticipant } = await import("@/app/host/sessions/[id]/actions")
+      const result = await removeParticipant(sessionId, participantToRemove.id)
+      
+      if (!result.ok) {
+        logError("attendee_remove_failed", withTrace({
+          error: result.error,
+          participantId: participantToRemove.id,
+          sessionId,
+        }, traceId))
+        toast({
+          title: "Failed to remove attendee",
+          description: result.error || "Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      logInfo("attendee_remove_success", withTrace({
+        participantId: participantToRemove.id,
+        sessionId,
+      }, traceId))
+
+      // Optimistic update
+      if (analytics) {
+        setAnalytics({
+          ...analytics,
+          attendance: {
+            ...analytics.attendance,
+            accepted: Math.max(0, analytics.attendance.accepted - 1),
+          },
+          acceptedList: analytics.acceptedList.filter(
+            (p) => p.id !== participantToRemove.id
+          ),
+        })
+      }
+
+      toast({
+        title: "Attendee removed",
+        description: `${participantToRemove.name} has been removed from the session.`,
+      })
+
+      setRemoveDialogOpen(false)
+      setParticipantToRemove(null)
+
+      // Refetch to ensure consistency
+      await refetchAnalytics()
+    } catch (error: any) {
+      logError("attendee_remove_failed", withTrace({
+        error: error?.message || "Unknown error",
+        participantId: participantToRemove.id,
+        sessionId,
+      }, traceId))
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to remove attendee. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsRemoving(false)
+    }
+  }
+
+  // Open add dialog
+  const handleOpenAddDialog = () => {
+    const traceId = newTraceId("attendee_add")
+    logInfo("attendee_add_open", withTrace({ sessionId }, traceId))
+    setAddDialogOpen(true)
+  }
+
+  // Open remove dialog
+  const handleOpenRemoveDialog = (participant: { id: string; display_name: string }) => {
+    const traceId = newTraceId("attendee_remove")
+    logInfo("attendee_remove_click", withTrace({
+      participantId: participant.id,
+      sessionId,
+    }, traceId))
+    setParticipantToRemove({ id: participant.id, name: participant.display_name })
+    setRemoveDialogOpen(true)
+  }
 
   const glassCard = uiMode === "dark"
     ? "bg-black/30 border-white/20 text-white backdrop-blur-sm"
@@ -305,9 +523,24 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
               <h3 className={cn("text-sm font-semibold", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
                 Attendees
               </h3>
-              <span className={cn("text-xs", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
-                {analytics.attendance.accepted} going · {spotsLeft} spots left
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={cn("text-xs", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+                  {analytics.attendance.accepted} going · {spotsLeft} spots left
+                </span>
+                <Button
+                  onClick={handleOpenAddDialog}
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "h-8 w-8 rounded-full",
+                    uiMode === "dark"
+                      ? "text-white/70 hover:text-white hover:bg-white/10"
+                      : "text-black/70 hover:text-black hover:bg-black/10"
+                  )}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
             
             {analytics.acceptedList.length > 0 ? (
@@ -316,13 +549,26 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
                   <div
                     key={participant.id}
                     className={cn(
-                      "flex-shrink-0 px-3 py-2 rounded-full text-sm font-medium",
+                      "relative flex-shrink-0 px-3 py-2 rounded-full text-sm font-medium",
                       uiMode === "dark"
                         ? "bg-white/10 text-white border border-white/20"
                         : "bg-black/10 text-black border border-black/20"
                     )}
                   >
                     {participant.display_name}
+                    <button
+                      onClick={() => handleOpenRemoveDialog(participant)}
+                      className={cn(
+                        "absolute -top-1 -right-1 h-6 w-6 rounded-full flex items-center justify-center",
+                        "transition-colors",
+                        uiMode === "dark"
+                          ? "bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30"
+                          : "bg-red-500/20 hover:bg-red-500/30 text-red-600 border border-red-500/30"
+                      )}
+                      aria-label={`Remove ${participant.display_name}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -558,6 +804,135 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
 
       {/* Save Draft Guard Modal */}
       <SaveDraftGuardModal sessionId={sessionId} uiMode={uiMode} sessionStatus={analytics?.sessionStatus} />
+
+      {/* Add Attendee Dialog */}
+      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+        <DialogContent
+          className={cn(
+            "w-[calc(100vw-24px)] max-w-[520px] max-h-[calc(100vh-24px)] rounded-2xl",
+            uiMode === "dark"
+              ? "bg-slate-900 text-white border border-white/10"
+              : "bg-white text-black border border-black/10"
+          )}
+        >
+          <DialogHeader>
+            <DialogTitle className={cn("text-xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
+              Add attendee
+            </DialogTitle>
+            <DialogDescription className={cn(uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+              Manually add an attendee to this session.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <Label htmlFor="attendee-name" className={cn(uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+                Name <span className="text-red-400">*</span>
+              </Label>
+              <Input
+                id="attendee-name"
+                value={newParticipantName}
+                onChange={(e) => setNewParticipantName(e.target.value)}
+                placeholder="Enter attendee name"
+                className={cn(
+                  uiMode === "dark"
+                    ? "bg-white/5 border-white/20 text-white placeholder:text-white/40"
+                    : "bg-black/5 border-black/20 text-black placeholder:text-black/40"
+                )}
+                disabled={isAdding}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="attendee-phone" className={cn(uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+                Phone (optional)
+              </Label>
+              <Input
+                id="attendee-phone"
+                value={newParticipantPhone}
+                onChange={(e) => setNewParticipantPhone(e.target.value)}
+                placeholder="Enter phone number"
+                type="tel"
+                className={cn(
+                  uiMode === "dark"
+                    ? "bg-white/5 border-white/20 text-white placeholder:text-white/40"
+                    : "bg-black/5 border-black/20 text-black placeholder:text-black/40"
+                )}
+                disabled={isAdding}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-3 mt-6">
+            <Button
+              onClick={() => {
+                setAddDialogOpen(false)
+                setNewParticipantName("")
+                setNewParticipantPhone("")
+              }}
+              variant="outline"
+              disabled={isAdding}
+              className={cn(
+                "flex-1 rounded-full h-12",
+                uiMode === "dark"
+                  ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
+                  : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
+              )}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddParticipant}
+              disabled={isAdding || !newParticipantName.trim()}
+              className="flex-1 bg-[var(--theme-accent)] hover:bg-[var(--theme-accent)]/90 text-white font-medium rounded-full h-12 shadow-lg"
+            >
+              {isAdding ? "Adding..." : "Add attendee"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove Attendee Alert Dialog */}
+      <AlertDialog open={removeDialogOpen} onOpenChange={setRemoveDialogOpen}>
+        <AlertDialogContent
+          className={cn(
+            "w-[calc(100vw-24px)] max-w-[520px] rounded-2xl",
+            uiMode === "dark"
+              ? "bg-slate-900 text-white border border-white/10"
+              : "bg-white text-black border border-black/10"
+          )}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle className={cn("text-xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
+              Remove attendee?
+            </AlertDialogTitle>
+            <AlertDialogDescription className={cn(uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+              This will remove {participantToRemove?.name} from the attendee list. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-3 mt-4">
+            <AlertDialogCancel
+              onClick={() => {
+                setRemoveDialogOpen(false)
+                setParticipantToRemove(null)
+              }}
+              disabled={isRemoving}
+              className={cn(
+                "flex-1 rounded-full h-12",
+                uiMode === "dark"
+                  ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
+                  : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
+              )}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRemoveParticipant}
+              disabled={isRemoving}
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium rounded-full h-12 shadow-lg shadow-red-500/20"
+            >
+              {isRemoving ? "Removing..." : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

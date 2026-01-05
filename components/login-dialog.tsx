@@ -10,7 +10,8 @@ import { Chrome, Mail, ArrowLeft } from "lucide-react"
 import { handleGoogleOAuth, handleEmailAuth, handleEmailOtpVerify } from "@/lib/auth"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/lib/hooks/use-auth"
-import { getCurrentReturnTo, setPostAuthRedirect } from "@/lib/post-auth-redirect"
+import { getCurrentReturnTo, setPostAuthRedirect, consumePostAuthRedirect } from "@/lib/post-auth-redirect"
+import { getCurrentUrl, setReturnTo, consumeReturnTo } from "@/lib/return-to"
 import { useRouter } from "next/navigation"
 
 const COOLDOWN_S = 60
@@ -46,8 +47,7 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
   const { toast } = useToast()
   const { isAuthenticated } = useAuth()
   const router = useRouter()
-  const [showGuestForm, setShowGuestForm] = useState(false)
-  const [guestName, setGuestName] = useState("")
+  // Removed showGuestForm and guestName - no longer needed since we skip the name-only dialog
   const [showEmailForm, setShowEmailForm] = useState(false)
   const [emailStep, setEmailStep] = useState<"email" | "code">("email")
   const [email, setEmail] = useState("")
@@ -62,8 +62,6 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
     if (isAuthenticated && open) {
       onOpenChange(false)
       // Reset all forms
-      setShowGuestForm(false)
-      setGuestName("")
       setShowEmailForm(false)
       setEmail("")
       setOtp("")
@@ -72,7 +70,9 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
       setCooldownRemaining(0)
       
       // Redirect to stored URL (for OTP verification which happens in-page)
-      const redirectTo = getCurrentReturnTo()
+      // Try new return-to helper first, fallback to post-auth-redirect
+      const redirectTo = consumeReturnTo() || consumePostAuthRedirect()
+      console.log("[auth] signed_in redirect", { returnTo: redirectTo })
       if (redirectTo && redirectTo !== "/") {
         router.push(redirectTo)
       }
@@ -101,45 +101,18 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
   }, [email, showEmailForm, emailStep])
 
   const handleGuestContinue = () => {
-    setShowGuestForm(true)
-  }
-
-  const handleGuestSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    if (!guestName.trim()) {
-      toast({
-        title: "Name required",
-        description: "Please enter your name to continue as guest",
-        variant: "destructive",
-      })
-      return
-    }
-
-    // Store guest name in localStorage
-    if (typeof window !== "undefined") {
-      localStorage.setItem("guestName", guestName.trim())
-    }
-
+    // Skip the name-only form and directly proceed to GuestRSVPDialog
+    // The GuestRSVPDialog will handle name + phone collection
     if (onContinueAsGuest) {
-      onContinueAsGuest(guestName.trim())
+      // Pass empty string - GuestRSVPDialog will handle name input
+      onContinueAsGuest("")
     }
     onOpenChange(false)
-    // Reset state
-    setShowGuestForm(false)
-    setGuestName("")
-  }
-
-  const handleBackToLogin = () => {
-    setShowGuestForm(false)
-    setGuestName("")
   }
 
   // Reset form when dialog closes
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) {
-      setShowGuestForm(false)
-      setGuestName("")
       setShowEmailForm(false)
       setEmail("")
       setOtp("")
@@ -154,7 +127,9 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
   const handleGoogleClick = async () => {
     try {
       // Capture current URL before starting OAuth
-      const returnTo = getCurrentReturnTo()
+      const returnTo = getCurrentUrl()
+      setReturnTo(returnTo)
+      // Also set post-auth redirect for compatibility
       setPostAuthRedirect(returnTo)
       
       await handleGoogleOAuth(returnTo)
@@ -208,7 +183,9 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
     }
 
     // Capture current URL before sending OTP
-    const returnTo = getCurrentReturnTo()
+    const returnTo = getCurrentUrl()
+    setReturnTo(returnTo)
+    // Also set post-auth redirect for compatibility
     setPostAuthRedirect(returnTo)
 
     setIsSending(true)
@@ -422,7 +399,7 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
               </form>
             )}
           </>
-        ) : !showGuestForm ? (
+        ) : (
           <>
             <DialogHeader>
               <DialogTitle className="text-2xl font-bold text-white">Welcome to RESERV</DialogTitle>
@@ -465,51 +442,6 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
                 Continue as guest
               </button>
             </div>
-          </>
-        ) : (
-          <>
-            <DialogHeader>
-              <DialogTitle className="text-2xl font-bold text-white">Continue as Guest</DialogTitle>
-              <DialogDescription className="text-white/60">
-                Enter your name to continue as a guest
-              </DialogDescription>
-            </DialogHeader>
-
-            <form onSubmit={handleGuestSubmit} className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="guestName" className="text-white">
-                  Your Name
-                </Label>
-                <Input
-                  id="guestName"
-                  type="text"
-                  placeholder="John Doe"
-                  required
-                  value={guestName}
-                  onChange={(e) => setGuestName(e.target.value)}
-                  className="bg-slate-700/50 border-white/10 text-white placeholder:text-white/40"
-                  autoFocus
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleBackToLogin}
-                  className="border-white/30 bg-white/5 hover:bg-white/10 text-white"
-                >
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back
-                </Button>
-                <Button
-                  type="submit"
-                  className="flex-1 bg-white hover:bg-white/90 text-black font-medium"
-                >
-                  Continue
-                </Button>
-              </div>
-            </form>
           </>
         )}
       </DialogContent>

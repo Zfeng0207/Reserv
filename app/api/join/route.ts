@@ -120,7 +120,15 @@ export async function POST(req: Request) {
     
     try {
       adminSupabase = createAdminClient()
+      console.log("[waitlist] Admin client created successfully", {
+        hasAdminClient: !!adminSupabase,
+        hasServiceRoleKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY
+      })
     } catch (adminError: any) {
+      console.error("[waitlist] Failed to create admin client", {
+        error: adminError.message,
+        stack: adminError.stack
+      })
       log("error", "join_admin_client_creation_failed", {
         traceId,
         error: adminError?.message,
@@ -299,7 +307,7 @@ export async function POST(req: Request) {
           contact_phone: trimmedPhone,
         })
         .eq("id", existingParticipant.id)
-        .select("id")
+        .select("id, status")
         .single()
 
       logInfo("join_participant_write_result", withTrace({
@@ -322,7 +330,7 @@ export async function POST(req: Request) {
         // Return waitlisted response if they're still waitlisted
         if (newStatus === "waitlisted") {
           return jsonResponse(
-            { ok: true, traceId, participantId: updateRes.data.id, waitlisted: true },
+            { ok: true, traceId, participantId: updateRes.data.id, waitlisted: true, joinedAs: "waitlist" },
             200
           )
         }
@@ -349,6 +357,19 @@ export async function POST(req: Request) {
       const isFull = sessionRes.data.capacity && count !== null && count >= sessionRes.data.capacity
       const waitlistEnabled = sessionRes.data.waitlist_enabled !== false
 
+      console.log("[waitlist] Capacity check for NEW participant", {
+        traceId,
+        capacity: sessionRes.data.capacity,
+        currentCount: count,
+        isFull,
+        waitlistEnabled,
+        waitlistEnabledRaw: sessionRes.data.waitlist_enabled,
+        waitlistEnabledType: typeof sessionRes.data.waitlist_enabled,
+        waitlistEnabledValue: sessionRes.data.waitlist_enabled,
+        sessionId: sessionRes.data.id,
+        condition: `capacity=${sessionRes.data.capacity}, count=${count}, isFull=${isFull}`
+      })
+
       log("info", "join_capacity_check", {
         traceId,
         capacity: sessionRes.data.capacity,
@@ -356,29 +377,104 @@ export async function POST(req: Request) {
         isFull,
         waitlistEnabled,
         waitlistEnabledRaw: sessionRes.data.waitlist_enabled,
+        waitlistEnabledType: typeof sessionRes.data.waitlist_enabled,
+        waitlistEnabledValue: sessionRes.data.waitlist_enabled,
       })
 
       if (isFull) {
+        console.log("[waitlist] ✅ Session is FULL - entering waitlist logic", {
+          traceId,
+          isFull,
+          waitlistEnabled,
+          willInsertWaitlist: waitlistEnabled,
+          capacity: sessionRes.data.capacity,
+          currentCount: count,
+          sessionId: sessionRes.data.id
+        })
+        console.log("[waitlist] Session is full, checking waitlist_enabled", {
+          isFull,
+          waitlistEnabled,
+          waitlistEnabledRaw: sessionRes.data.waitlist_enabled,
+          capacity: sessionRes.data.capacity,
+          count
+        })
+        
         if (waitlistEnabled) {
+          console.log("[waitlist] ✅ Waitlist is ENABLED - proceeding with waitlist insert", {
+            traceId,
+            sessionId: sessionRes.data.id,
+            hasAdminClient: !!adminSupabase
+          })
           // Join waitlist instead
+          console.log("[waitlist] Waitlist enabled, inserting as waitlisted", {
+            sessionId: sessionRes.data.id,
+            name: trimmedName,
+            guestKey: finalGuestKey
+          })
+          
           logInfo("join_participant_write_start", withTrace({
             sessionId: sessionRes.data.id,
             action: "insert_waitlist",
           }, traceId))
           
           // Use admin client to bypass RLS (we've already validated session is open)
+          console.log("[waitlist] About to insert with admin client", {
+            hasAdminClient: !!adminSupabase,
+            sessionId: sessionRes.data.id,
+            name: trimmedName,
+            phone: trimmedPhone,
+            guestKey: finalGuestKey,
+            status: "waitlisted"
+          })
+          
+          // Use exact enum value from schema: "waitlisted" (from participant_status enum)
+          const insertPayload: {
+            session_id: string
+            display_name: string
+            contact_phone: string | null
+            guest_key: string
+            status: "waitlisted"
+          } = {
+            session_id: sessionRes.data.id,
+            display_name: trimmedName,
+            contact_phone: trimmedPhone,
+            guest_key: finalGuestKey,
+            status: "waitlisted", // Must match enum: "invited" | "confirmed" | "cancelled" | "waitlisted"
+          }
+          
+          console.log("[waitlist] Insert payload (typed)", {
+            ...insertPayload,
+            statusType: typeof insertPayload.status,
+            statusValue: insertPayload.status
+          })
+          
           const waitlistRes = await adminSupabase
             .from("participants")
-            .insert({
-              session_id: sessionRes.data.id,
-              display_name: trimmedName,
-              contact_phone: trimmedPhone,
-              guest_key: finalGuestKey,
-              status: "waitlisted",
-            })
+            .insert(insertPayload)
             .select("id, status")
             .single()
+          
+          console.log("[waitlist] Insert completed", {
+            hasData: !!waitlistRes.data,
+            hasError: !!waitlistRes.error,
+            data: waitlistRes.data,
+            error: waitlistRes.error ? {
+              message: waitlistRes.error.message,
+              code: (waitlistRes.error as any)?.code,
+              details: (waitlistRes.error as any)?.details,
+              hint: (waitlistRes.error as any)?.hint
+            } : null
+          })
 
+          console.log("[waitlist] Insert result", {
+            success: !!waitlistRes.data,
+            error: waitlistRes.error?.message,
+            participantId: waitlistRes.data?.id,
+            status: waitlistRes.data?.status,
+            errorCode: (waitlistRes.error as any)?.code,
+            errorDetails: (waitlistRes.error as any)?.details
+          })
+          
           logInfo("join_participant_write_result", withTrace({
             participantId: waitlistRes.data?.id || null,
             rsvp_status: waitlistRes.data?.status || null,
@@ -393,16 +489,94 @@ export async function POST(req: Request) {
           }, traceId))
 
           if (waitlistRes.error) {
-            // Log full error details for production debugging
-            logError("join_waitlist_insert_error", withTrace({
+            console.error("[waitlist] Insert failed", {
               error: waitlistRes.error.message,
               code: (waitlistRes.error as any)?.code,
               details: (waitlistRes.error as any)?.details,
-              hint: (waitlistRes.error as any)?.hint,
-              sessionId: sessionRes.data.id,
-              stage: "waitlist_insert",
-            }, traceId))
-            insertError = waitlistRes.error
+              hint: (waitlistRes.error as any)?.hint
+            })
+            const errorCode = (waitlistRes.error as any)?.code
+            const isDuplicateKey = errorCode === "23505" || 
+                                   waitlistRes.error.message?.includes("duplicate key") ||
+                                   waitlistRes.error.message?.includes("unique constraint")
+            
+            // Handle duplicate key error (idempotent join)
+            if (isDuplicateKey) {
+              logInfo("join_duplicate_detected_waitlist", withTrace({
+                error: waitlistRes.error.message,
+                code: errorCode,
+                details: (waitlistRes.error as any)?.details,
+                sessionId: sessionRes.data.id,
+                guestKey: finalGuestKey,
+                stage: "duplicate_waitlist_join_handling",
+              }, traceId))
+              
+              // Fetch existing participant
+              const { data: existingParticipant, error: fetchError } = await adminSupabase
+                .from("participants")
+                .select("id, status, display_name")
+                .eq("session_id", sessionRes.data.id)
+                .eq("guest_key", finalGuestKey)
+                .single()
+              
+              if (fetchError || !existingParticipant) {
+                logError("join_duplicate_fetch_failed_waitlist", withTrace({
+                  error: fetchError?.message || "Participant not found after duplicate error",
+                  code: errorCode,
+                  sessionId: sessionRes.data.id,
+                  guestKey: finalGuestKey,
+                }, traceId))
+                insertError = waitlistRes.error // Fall back to original error
+              } else {
+                // Successfully found existing participant - treat as success
+                participantId = existingParticipant.id
+                logInfo("join_already_joined_waitlist", withTrace({
+                  participantId: existingParticipant.id,
+                  status: existingParticipant.status,
+                  displayName: existingParticipant.display_name,
+                  sessionId: sessionRes.data.id,
+                  stage: "duplicate_waitlist_join_success",
+                }, traceId))
+                
+                // Return success with alreadyJoined flag
+                return jsonResponse(
+                  { 
+                    ok: true, 
+                    traceId, 
+                    participantId: existingParticipant.id,
+                    alreadyJoined: true,
+                    waitlisted: existingParticipant.status === "waitlisted",
+                    joinedAs: existingParticipant.status === "waitlisted" ? "waitlist" : "joined",
+                  },
+                  200
+                )
+              }
+            } else {
+              // Log full error details for production debugging
+              console.error("[waitlist] Non-duplicate error during waitlist insert", {
+                error: waitlistRes.error.message,
+                code: errorCode,
+                details: (waitlistRes.error as any)?.details,
+                hint: (waitlistRes.error as any)?.hint
+              })
+              logError("join_waitlist_insert_error", withTrace({
+                error: waitlistRes.error.message,
+                code: errorCode,
+                details: (waitlistRes.error as any)?.details,
+                hint: (waitlistRes.error as any)?.hint,
+                sessionId: sessionRes.data.id,
+                stage: "waitlist_insert",
+              }, traceId))
+              // Return error immediately - don't fall through to confirmed insert
+              return jsonResponse(
+                { 
+                  error: waitlistRes.error?.message || "Failed to join waitlist", 
+                  traceId,
+                  code: errorCode || "WAITLIST_INSERT_FAILED"
+                },
+                500
+              )
+            }
           } else if (!waitlistRes.data) {
             // Edge case: no error but also no data
             logError("join_waitlist_insert_no_data", withTrace({
@@ -414,13 +588,22 @@ export async function POST(req: Request) {
               500
             )
           } else {
+            // SUCCESS: Waitlist insert succeeded
             participantId = waitlistRes.data.id
+            console.log("[waitlist] ✅ SUCCESS - Waitlist insert completed", {
+              traceId,
+              participantId: waitlistRes.data.id,
+              status: waitlistRes.data.status,
+              sessionId: sessionRes.data.id,
+              name: trimmedName
+            })
             log("info", "join_waitlist_success", {
               traceId,
               participantId: waitlistRes.data.id,
+              status: waitlistRes.data.status,
             })
             return jsonResponse(
-              { ok: true, traceId, participantId: waitlistRes.data.id, waitlisted: true },
+              { ok: true, traceId, participantId: waitlistRes.data.id, waitlisted: true, joinedAs: "waitlist" },
               200
             )
           }
@@ -474,16 +657,79 @@ export async function POST(req: Request) {
         })
 
         if (insertRes.error) {
-          // Log full error details for production debugging
-          log("error", "join_participant_insert_error", {
-            traceId,
-            error: insertRes.error.message,
-            code: (insertRes.error as any)?.code,
-            details: (insertRes.error as any)?.details,
-            hint: (insertRes.error as any)?.hint,
-            sessionId: sessionRes.data.id,
-          })
-          insertError = insertRes.error
+          const errorCode = (insertRes.error as any)?.code
+          const isDuplicateKey = errorCode === "23505" || 
+                                 insertRes.error.message?.includes("duplicate key") ||
+                                 insertRes.error.message?.includes("unique constraint")
+          
+          // Handle duplicate key error (idempotent join)
+          if (isDuplicateKey) {
+            logInfo("join_duplicate_detected", withTrace({
+              error: insertRes.error.message,
+              code: errorCode,
+              details: (insertRes.error as any)?.details,
+              sessionId: sessionRes.data.id,
+              guestKey: finalGuestKey,
+              stage: "duplicate_join_handling",
+            }, traceId))
+            
+            // Fetch existing participant
+            const { data: existingParticipant, error: fetchError } = await adminSupabase
+              .from("participants")
+              .select("id, status, display_name")
+              .eq("session_id", sessionRes.data.id)
+              .eq("guest_key", finalGuestKey)
+              .single()
+            
+            if (fetchError || !existingParticipant) {
+              logError("join_duplicate_fetch_failed", withTrace({
+                error: fetchError?.message || "Participant not found after duplicate error",
+                fetchErrorCode: (fetchError as any)?.code,
+                fetchErrorDetails: (fetchError as any)?.details,
+                code: errorCode,
+                sessionId: sessionRes.data.id,
+                guestKey: finalGuestKey,
+                stage: "duplicate_fetch_failed",
+              }, traceId))
+              // Even if fetch fails, we know the participant exists (duplicate key error)
+              // Try one more time with a simpler query or return success anyway
+              // For now, fall back to original error - it will be caught in final handler
+              insertError = insertRes.error // Fall back to original error
+            } else {
+              // Successfully found existing participant - treat as success
+              participantId = existingParticipant.id
+              logInfo("join_already_joined", withTrace({
+                participantId: existingParticipant.id,
+                status: existingParticipant.status,
+                displayName: existingParticipant.display_name,
+                sessionId: sessionRes.data.id,
+                stage: "duplicate_join_success",
+              }, traceId))
+              
+              // Return success with alreadyJoined flag
+              return jsonResponse(
+                { 
+                  ok: true, 
+                  traceId, 
+                  participantId: existingParticipant.id,
+                  alreadyJoined: true,
+                  waitlisted: existingParticipant.status === "waitlisted",
+                },
+                200
+              )
+            }
+          } else {
+            // Log full error details for production debugging
+            log("error", "join_participant_insert_error", {
+              traceId,
+              error: insertRes.error.message,
+              code: errorCode,
+              details: (insertRes.error as any)?.details,
+              hint: (insertRes.error as any)?.hint,
+              sessionId: sessionRes.data.id,
+            })
+            insertError = insertRes.error
+          }
         } else if (!insertRes.data) {
           // Edge case: no error but also no data
           log("error", "join_participant_insert_no_data", {
@@ -512,6 +758,93 @@ export async function POST(req: Request) {
       const isRLSError = insertError.message?.includes("row-level security") || 
                         insertError.message?.includes("RLS") ||
                         errorCode === "42501"
+      const isDuplicateKey = errorCode === "23505" || 
+                            insertError.message?.includes("duplicate key") ||
+                            insertError.message?.includes("unique constraint")
+      
+      // If we still have a duplicate key error here, try one more time to fetch existing participant
+      if (isDuplicateKey && !participantId) {
+        logInfo("join_duplicate_final_attempt", withTrace({
+          error: insertError.message,
+          code: errorCode,
+          sessionId: sessionRes.data.id,
+          guestKey: finalGuestKey,
+          stage: "final_duplicate_handling",
+        }, traceId))
+        
+        const { data: existingParticipant, error: fetchError } = await adminSupabase
+          .from("participants")
+          .select("id, status, display_name")
+          .eq("session_id", sessionRes.data.id)
+          .eq("guest_key", finalGuestKey)
+          .single()
+        
+        if (fetchError) {
+          logError("join_duplicate_final_fetch_error", withTrace({
+            error: fetchError.message,
+            code: (fetchError as any)?.code,
+            details: (fetchError as any)?.details,
+            sessionId: sessionRes.data.id,
+            guestKey: finalGuestKey,
+            stage: "final_duplicate_fetch_error",
+          }, traceId))
+          // Even if fetch fails, we know participant exists (duplicate key error)
+          // Return success anyway - the frontend will handle refreshing to get the participant
+          return jsonResponse(
+            { 
+              ok: true, 
+              traceId, 
+              participantId: null, // We couldn't fetch it, but it exists
+              alreadyJoined: true,
+              waitlisted: false, // Unknown status, but treat as joined
+            },
+            200
+          )
+        }
+        
+        if (existingParticipant) {
+          participantId = existingParticipant.id
+          logInfo("join_already_joined_final", withTrace({
+            participantId: existingParticipant.id,
+            status: existingParticipant.status,
+            displayName: existingParticipant.display_name,
+            sessionId: sessionRes.data.id,
+            stage: "final_duplicate_success",
+          }, traceId))
+          
+          // Return success with alreadyJoined flag
+          return jsonResponse(
+            { 
+              ok: true, 
+              traceId, 
+              participantId: existingParticipant.id,
+              alreadyJoined: true,
+              waitlisted: existingParticipant.status === "waitlisted",
+              joinedAs: existingParticipant.status === "waitlisted" ? "waitlist" : "joined",
+            },
+            200
+          )
+        } else {
+          logError("join_duplicate_final_no_participant", withTrace({
+            sessionId: sessionRes.data.id,
+            guestKey: finalGuestKey,
+            stage: "final_duplicate_no_participant",
+          }, traceId))
+          // Even if we can't find the participant, we know it exists (duplicate key error)
+          // Return success anyway
+          return jsonResponse(
+            { 
+              ok: true, 
+              traceId, 
+              participantId: null,
+              alreadyJoined: true,
+              waitlisted: false,
+              joinedAs: "joined", // Default to joined if we can't determine
+            },
+            200
+          )
+        }
+      }
       
       log("error", "join_participant_insert_failed", {
         traceId,
@@ -520,9 +853,30 @@ export async function POST(req: Request) {
         details: errorDetails,
         hint: errorHint,
         isRLSError,
+        isDuplicateKey,
         sessionId: sessionRes.data.id,
         guestKey: finalGuestKey,
       })
+      
+      // For duplicate key errors that we couldn't resolve, return 500 (shouldn't happen in normal flow)
+      if (isDuplicateKey && !participantId) {
+        logError("join_duplicate_unresolved", withTrace({
+          error: insertError.message,
+          code: errorCode,
+          sessionId: sessionRes.data.id,
+          guestKey: finalGuestKey,
+          stage: "unresolved_duplicate",
+        }, traceId))
+        return jsonResponse(
+          {
+            error: "Internal error: Unable to resolve duplicate join",
+            detail: insertError.message,
+            code: errorCode,
+            traceId,
+          },
+          500
+        )
+      }
       
       return jsonResponse(
         {

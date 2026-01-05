@@ -1293,3 +1293,133 @@ export async function markParticipantPaidByCash(
 
   return { ok: true, paymentProofId: newProof.id }
 }
+
+/**
+ * Add a participant manually (host-only)
+ * Creates a participant with status="confirmed" for the session
+ */
+export async function addParticipant(
+  sessionId: string,
+  name: string,
+  phone: string | null
+): Promise<{ ok: true; participantId: string } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  // Verify session belongs to host
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .select("id, host_id")
+    .eq("id", sessionId)
+    .single()
+
+  if (sessionError || !session) {
+    return { ok: false, error: "Session not found" }
+  }
+
+  if (session.host_id !== userId) {
+    return { ok: false, error: "Unauthorized: You don't own this session" }
+  }
+
+  // Validate name
+  const trimmedName = name.trim()
+  if (!trimmedName || trimmedName.length === 0) {
+    return { ok: false, error: "Name is required" }
+  }
+
+  // Use admin client to bypass RLS (host action)
+  const adminClient = createAdminClient()
+
+  // Insert participant with status="confirmed"
+  const { data: newParticipant, error: insertError } = await adminClient
+    .from("participants")
+    .insert({
+      session_id: sessionId,
+      display_name: trimmedName,
+      contact_phone: phone?.trim() || null,
+      status: "confirmed",
+      // guest_key is null for manually added participants
+    })
+    .select("id")
+    .single()
+
+  if (insertError) {
+    console.error("[addParticipant] Error:", insertError)
+    return { ok: false, error: insertError.message || "Failed to add participant" }
+  }
+
+  // Revalidate paths
+  revalidatePath(`/host/sessions/${sessionId}/edit`)
+
+  return { ok: true, participantId: newParticipant.id }
+}
+
+/**
+ * Remove a participant (host-only)
+ * Hard-deletes the participant row
+ */
+export async function removeParticipant(
+  sessionId: string,
+  participantId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  // Verify session belongs to host
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .select("id, host_id")
+    .eq("id", sessionId)
+    .single()
+
+  if (sessionError || !session) {
+    return { ok: false, error: "Session not found" }
+  }
+
+  if (session.host_id !== userId) {
+    return { ok: false, error: "Unauthorized: You don't own this session" }
+  }
+
+  // Verify participant belongs to this session
+  const { data: participant, error: participantError } = await supabase
+    .from("participants")
+    .select("id, session_id")
+    .eq("id", participantId)
+    .single()
+
+  if (participantError || !participant) {
+    return { ok: false, error: "Participant not found" }
+  }
+
+  if (participant.session_id !== sessionId) {
+    return { ok: false, error: "Participant does not belong to this session" }
+  }
+
+  // Use admin client to bypass RLS (host action)
+  const adminClient = createAdminClient()
+
+  // Hard-delete the participant
+  const { error: deleteError } = await adminClient
+    .from("participants")
+    .delete()
+    .eq("id", participantId)
+    .eq("session_id", sessionId) // Extra safety check
+
+  if (deleteError) {
+    console.error("[removeParticipant] Error:", deleteError)
+    return { ok: false, error: deleteError.message || "Failed to remove participant" }
+  }
+
+  // Revalidate paths
+  revalidatePath(`/host/sessions/${sessionId}/edit`)
+
+  return { ok: true }
+}

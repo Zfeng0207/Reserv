@@ -219,7 +219,9 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
               <button
                 onClick={() => {
                   // Capture current URL before opening login dialog
-                  const returnTo = getCurrentReturnTo()
+                  const returnTo = getCurrentUrl()
+                  setReturnTo(returnTo)
+                  // Also set post-auth redirect for compatibility
                   setPostAuthRedirect(returnTo)
                   setLoginDialogOpen(true)
                 }}

@@ -169,6 +169,14 @@ async function PublicInviteContent({
   const confirmedParticipants = (allParticipants || []).filter(p => p.status === "confirmed")
   const waitlistParticipants = (allParticipants || []).filter(p => p.status === "waitlisted")
 
+  // Debug: Log participant separation
+  console.log("[PublicInvitePage] Participants fetched", {
+    total: allParticipants?.length || 0,
+    confirmed: confirmedParticipants.length,
+    waitlisted: waitlistParticipants.length,
+    allParticipants: allParticipants?.map(p => ({ id: p.id, name: p.display_name, status: p.status }))
+  })
+
   return (
     <PublicSessionView
       session={session}

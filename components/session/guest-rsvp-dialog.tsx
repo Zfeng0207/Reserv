@@ -24,14 +24,37 @@ export function GuestRSVPDialog({
   action,
   initialName = "",
 }: GuestRSVPDialogProps) {
-  const [name, setName] = useState(initialName)
-  const [phone, setPhone] = useState("")
+  // Try to load name/phone from localStorage on mount
+  const [name, setName] = useState(() => {
+    if (initialName) return initialName
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("guestName") || ""
+    }
+    return ""
+  })
+  const [phone, setPhone] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("guestPhone") || ""
+    }
+    return ""
+  })
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Update name when initialName changes (e.g., when dialog opens with pre-filled name)
   useEffect(() => {
-    if (open && initialName) {
-      setName(initialName)
+    if (open) {
+      // Prefer initialName prop, then localStorage
+      const storedName = typeof window !== "undefined" ? localStorage.getItem("guestName") : null
+      const nameToUse = initialName || storedName || ""
+      if (nameToUse) {
+        setName(nameToUse)
+      }
+      
+      // Also try to load phone from localStorage
+      const storedPhone = typeof window !== "undefined" ? localStorage.getItem("guestPhone") : null
+      if (storedPhone) {
+        setPhone(storedPhone)
+      }
     }
   }, [open, initialName])
 
@@ -40,10 +63,17 @@ export function GuestRSVPDialog({
       return
     }
 
+    // Store name and phone in localStorage for future use
+    if (typeof window !== "undefined") {
+      localStorage.setItem("guestName", name.trim())
+      if (phone.trim()) {
+        localStorage.setItem("guestPhone", phone.trim())
+      }
+    }
+
     setIsSubmitting(true)
     onContinue(name.trim(), phone.trim() || null)
-    setName("")
-    setPhone("")
+    // Don't clear name/phone - keep them for next time
     setIsSubmitting(false)
     onOpenChange(false)
   }

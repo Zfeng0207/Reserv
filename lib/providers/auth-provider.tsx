@@ -105,8 +105,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const supabase = createClient();
 
     const { data: subscription } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      async (event, session) => {
         setAuthUser(session?.user || undefined);
+        
+        // Handle redirect after sign-in (client-side fallback for OTP verification)
+        if (event === "SIGNED_IN" && typeof window !== "undefined") {
+          try {
+            const { consumeReturnTo } = await import("@/lib/return-to");
+            const returnTo = consumeReturnTo();
+            if (returnTo && returnTo !== "/" && !returnTo.startsWith("/auth")) {
+              console.log("[auth] signed_in redirect (auth provider)", { returnTo });
+              // Use setTimeout to ensure state updates complete first
+              setTimeout(() => {
+                window.location.href = returnTo;
+              }, 100);
+            }
+          } catch (error) {
+            console.error("[auth] redirect failed in auth provider", error);
+          }
+        }
       }
     );
 

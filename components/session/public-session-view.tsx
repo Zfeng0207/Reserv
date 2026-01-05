@@ -8,6 +8,7 @@ import { LoginDialog } from "@/components/login-dialog"
 import { getCurrentReturnTo, setPostAuthRedirect } from "@/lib/post-auth-redirect"
 import { joinSession, getParticipantRSVPStatus, getUnpaidParticipants } from "@/app/session/[id]/actions"
 import { log, logInfo, logWarn, logError, logGrouped, newTraceId, debugEnabled, withTrace } from "@/lib/logger"
+import { DebugPanel } from "@/components/debug-panel"
 import { useAuth } from "@/lib/hooks/use-auth"
 import { useToast } from "@/hooks/use-toast"
 import { format, parseISO } from "date-fns"
@@ -351,19 +352,19 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
         setLastJoinError(errorMessage)
         
         if (res.status === 404) {
-          toast({
+            toast({
             title: "Session not found",
             description: "Please check the invite link and try again.",
-            variant: "destructive",
-          })
+              variant: "destructive",
+            })
         } else if (res.status === 409 && json?.code === "CAPACITY_EXCEEDED") {
-          toast({
+            toast({
             title: "Session is full",
             description: json?.waitlistDisabled 
               ? "This session is full and waitlist is disabled. Please contact the host."
               : "This session is full. Please contact the host or try again later.",
-            variant: "destructive",
-          })
+              variant: "destructive",
+            })
         } else if (res.status === 403) {
           const detailMessage = json?.detail || errorMessage
           toast({
@@ -512,7 +513,7 @@ function PublicSessionViewContent({ session, participants, waitlist = [], hostSl
     setStoredParticipantInfo({ name, phone: null })
     // Small delay to ensure login dialog closes before RSVP dialog opens
     setTimeout(() => {
-      setRsvpDialogOpen(true)
+    setRsvpDialogOpen(true)
     }, 100)
   }
 

@@ -56,7 +56,7 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
   const [emailError, setEmailError] = useState<string | null>(null)
   const [cooldownRemaining, setCooldownRemaining] = useState(0)
 
-  // Close dialog when user becomes authenticated and redirect
+  // Close dialog when user becomes authenticated and refresh
   useEffect(() => {
     if (isAuthenticated && open) {
       onOpenChange(false)
@@ -68,13 +68,10 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
       setEmailError(null)
       setCooldownRemaining(0)
       
-      // Redirect to stored URL (for OTP verification which happens in-page)
-      // Try new return-to helper first, fallback to post-auth-redirect
-      const redirectTo = consumePostAuthRedirect()
-      console.log("[auth] signed_in redirect", { returnTo: redirectTo })
-      if (redirectTo && redirectTo !== "/") {
-        router.push(redirectTo)
-      }
+      // Stay on current page, refresh server components
+      // This ensures the UI updates to show authenticated state without navigation
+      console.log("[auth] signed_in - refreshing current page", { currentPath: window.location.pathname })
+      router.refresh()
     }
   }, [isAuthenticated, open, onOpenChange, router])
 
@@ -107,6 +104,8 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
       onContinueAsGuest("")
     }
     onOpenChange(false)
+    // Stay on current page, refresh server components
+    router.refresh()
   }
 
   // Reset form when dialog closes

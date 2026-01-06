@@ -5,12 +5,20 @@ import { revalidatePath } from "next/cache"
 import { logInfo, logError, logWarn, withTrace, newTraceId } from "@/lib/logger"
 
 /**
- * Get participant RSVP status for a session (by guest_key)
+ * Get participant RSVP status for a session (server-driven, user-specific)
+ * For authenticated users: checks by email
+ * For guests: checks by profile_id (sessionId + guestName) or guest_key as fallback
  * Returns the current status if participant exists, null otherwise
+ * 
+ * This ensures join state is always fetched per current user/guest, not cached client-side
+ * Guest identity is tied to name + session, not browser cookie
  */
 export async function getParticipantRSVPStatus(
   publicCode: string,
-  guestKey: string | null
+  guestKey: string | null,
+  userId: string | null = null,
+  userEmail: string | null = null,
+  guestName: string | null = null
 ): Promise<{ ok: true; status: "confirmed" | "cancelled" | "waitlisted" | null; displayName?: string; participantId?: string } | { ok: false; error: string }> {
   const supabase = await createClient()
 
@@ -26,18 +34,96 @@ export async function getParticipantRSVPStatus(
     return { ok: false, error: "Session not found" }
   }
 
-  // If no guest key provided, return null status
-  if (!guestKey) {
+  // Generate profile_id for guests (not authenticated users)
+  // Format: `${sessionId}-${guestName.trim().toLowerCase()}`
+  const profileId = !userEmail && guestName ? `${session.id}-${guestName.trim().toLowerCase()}` : null
+
+  // For authenticated users: try to find participant by email or guest_key
+  // For guests: find by profile_id first (name-based), then guest_key as fallback
+  // CRITICAL: If not authenticated and no guest_key/profile_id, return "none" (user signed out)
+  let participant = null
+  let error = null
+
+  if (userId && userEmail) {
+    // Authenticated user: check by email first (more reliable), then fallback to guest_key
+    const { data: emailMatch, error: emailError } = await supabase
+      .from("participants")
+      .select("id, status, display_name, guest_key, contact_email")
+      .eq("session_id", session.id)
+      .eq("contact_email", userEmail)
+      .maybeSingle()
+
+    if (emailMatch) {
+      participant = emailMatch
+    } else if (guestKey) {
+      // Fallback to guest_key if no email match
+      const { data: guestMatch, error: guestError } = await supabase
+        .from("participants")
+        .select("id, status, display_name, guest_key")
+        .eq("session_id", session.id)
+        .eq("guest_key", guestKey)
+        .maybeSingle()
+
+      if (guestMatch) {
+        participant = guestMatch
+      } else {
+        error = guestError
+      }
+    } else {
+      error = emailError
+    }
+  } else if (profileId) {
+    // Guest user: check by profile_id first (name-based, prevents duplicate names)
+    const { data: profileMatch, error: profileError } = await supabase
+      .from("participants")
+      .select("id, status, display_name, guest_key, contact_email, profile_id")
+      .eq("session_id", session.id)
+      .eq("profile_id", profileId)
+      .maybeSingle()
+
+    if (profileMatch) {
+      // Only return participant if it was created as a guest (no contact_email)
+      // This prevents showing "joined" for authenticated users who signed out
+      if (!profileMatch.contact_email) {
+        participant = profileMatch
+      }
+    } else if (guestKey) {
+      // Fallback to guest_key (for backward compatibility with old participants)
+      const { data: guestMatch, error: guestError } = await supabase
+        .from("participants")
+        .select("id, status, display_name, guest_key, contact_email")
+        .eq("session_id", session.id)
+        .eq("guest_key", guestKey)
+        .maybeSingle()
+
+      // Only return participant if it was created as a guest (no contact_email)
+      if (guestMatch && !guestMatch.contact_email) {
+        participant = guestMatch
+      } else {
+        error = guestError
+      }
+    } else {
+      error = profileError
+    }
+  } else if (guestKey) {
+    // Legacy: guest with guest_key but no profile_id/name (shouldn't happen with new code)
+    const { data: guestMatch, error: guestError } = await supabase
+      .from("participants")
+      .select("id, status, display_name, guest_key, contact_email")
+      .eq("session_id", session.id)
+      .eq("guest_key", guestKey)
+      .maybeSingle()
+
+    // Only return participant if it was created as a guest (no contact_email)
+    if (guestMatch && !guestMatch.contact_email) {
+      participant = guestMatch
+    } else {
+      error = guestError
+    }
+  } else {
+    // No identifier provided (not authenticated, no guest_key, no name) = signed out
     return { ok: true, status: null }
   }
-
-  // Find existing participant by guest_key
-  const { data: participant, error } = await supabase
-    .from("participants")
-    .select("id, status, display_name")
-    .eq("session_id", session.id)
-    .eq("guest_key", guestKey)
-    .single()
 
   if (error) {
     // Not found is OK (means no RSVP yet)
@@ -45,6 +131,10 @@ export async function getParticipantRSVPStatus(
       return { ok: true, status: null }
     }
     return { ok: false, error: error.message }
+  }
+
+  if (!participant) {
+    return { ok: true, status: null }
   }
 
   // Map status to our return type
@@ -210,6 +300,7 @@ async function handleDuplicateParticipant(
 
 /**
  * Upsert participant (insert or update)
+ * For guests: generates profile_id from sessionId + guestName to ensure unique identity per session
  */
 async function upsertParticipant(
   adminSupabase: ReturnType<typeof createAdminClient>,
@@ -218,16 +309,24 @@ async function upsertParticipant(
   phone: string | null,
   guestKey: string,
   status: ParticipantStatus,
-  existingParticipantId?: string
+  existingParticipantId?: string,
+  userEmail?: string | null
 ): Promise<
   | { participantId: string; status: ParticipantStatus }
   | { error: string; code?: string; isDuplicate?: boolean }
 > {
+  // Generate profile_id for guests (not authenticated users)
+  // Format: `${sessionId}-${guestName.trim().toLowerCase()}`
+  // This ensures unique guest identity per session based on name
+  const profileId = !userEmail ? `${sessionId}-${name.trim().toLowerCase()}` : null
+
   const payload = {
     session_id: sessionId,
     display_name: name,
     contact_phone: phone,
+    contact_email: userEmail || null, // Store email for authenticated users to enable user-specific lookups
     guest_key: guestKey,
+    profile_id: profileId, // Unique guest identifier per session
     status,
   }
 
@@ -328,10 +427,10 @@ export async function joinSession(
 
     if (!guestKey || typeof guestKey !== "string") {
       return { ok: false, error: "Guest key is required", traceId: finalTraceId }
-    }
+  }
 
-    const trimmedName = name.trim()
-    const trimmedPhone = phone?.trim() || null
+  const trimmedName = name.trim()
+  const trimmedPhone = phone?.trim() || null
 
     // Create Supabase clients
     let supabase: Awaited<ReturnType<typeof createAnonymousClient>>
@@ -359,13 +458,83 @@ export async function joinSession(
 
     const { session } = sessionResult
 
+    // Get current user info (if authenticated) for user-specific participant lookup
+    const { data: { user: currentUser } } = await supabase.auth.getUser()
+    const userEmail = currentUser?.email || null
+
+    // Generate profile_id for guests (not authenticated users)
+    // Format: `${sessionId}-${guestName.trim().toLowerCase()}`
+    // This ensures unique guest identity per session based on name
+    const profileId = !userEmail ? `${session.id}-${trimmedName.toLowerCase()}` : null
+
     // Check for existing participant (idempotency check)
-    const { data: existingParticipant, error: participantCheckError } = await supabase
-      .from("participants")
-      .select("id, status")
-      .eq("session_id", session.id)
-      .eq("guest_key", guestKey)
-      .maybeSingle()
+    // For authenticated users: check by email first, then guest_key
+    // For guests: check by profile_id first (name-based), then guest_key as fallback
+    let existingParticipant = null
+    let participantCheckError = null
+
+    if (userEmail) {
+      // Authenticated user: try email first
+      const { data: emailMatch, error: emailError } = await supabase
+        .from("participants")
+        .select("id, status")
+        .eq("session_id", session.id)
+        .eq("contact_email", userEmail)
+        .maybeSingle()
+
+      if (emailMatch) {
+        existingParticipant = emailMatch
+      } else if (guestKey) {
+        // Fallback to guest_key
+        const { data: guestMatch, error: guestError } = await supabase
+          .from("participants")
+          .select("id, status")
+          .eq("session_id", session.id)
+          .eq("guest_key", guestKey)
+          .maybeSingle()
+
+        existingParticipant = guestMatch
+        participantCheckError = guestError
+      } else {
+        participantCheckError = emailError
+      }
+    } else if (profileId) {
+      // Guest user: check by profile_id first (name-based, prevents duplicate names)
+      const { data: profileMatch, error: profileError } = await supabase
+        .from("participants")
+        .select("id, status")
+        .eq("session_id", session.id)
+        .eq("profile_id", profileId)
+        .maybeSingle()
+
+      if (profileMatch) {
+        existingParticipant = profileMatch
+      } else if (guestKey) {
+        // Fallback to guest_key (for backward compatibility)
+        const { data: guestMatch, error: guestError } = await supabase
+          .from("participants")
+          .select("id, status")
+          .eq("session_id", session.id)
+          .eq("guest_key", guestKey)
+          .maybeSingle()
+
+        existingParticipant = guestMatch
+        participantCheckError = guestError
+      } else {
+        participantCheckError = profileError
+      }
+    } else if (guestKey) {
+      // Legacy: guest with guest_key but no profile_id (shouldn't happen with new code)
+      const { data: guestMatch, error: guestError } = await supabase
+        .from("participants")
+        .select("id, status")
+        .eq("session_id", session.id)
+        .eq("guest_key", guestKey)
+        .maybeSingle()
+
+      existingParticipant = guestMatch
+      participantCheckError = guestError
+    }
 
     if (participantCheckError) {
       // Non-fatal: continue with insert attempt (will handle duplicate if exists)
@@ -375,10 +544,40 @@ export async function joinSession(
       ))
     }
 
+    // For guests: Check for duplicate name using profile_id BEFORE capacity check
+    // This prevents duplicate guest names in the same session
+    // Only check if we don't already have an existing participant (idempotent join)
+    if (!userEmail && profileId && !existingParticipant) {
+      const { data: duplicateCheck, error: duplicateError } = await supabase
+        .from("participants")
+        .select("id, display_name")
+        .eq("session_id", session.id)
+        .eq("profile_id", profileId)
+        .maybeSingle()
+
+      if (duplicateCheck) {
+        // Duplicate name found (different participant with same profile_id)
+        logWarn("join_duplicate_guest_name", withTrace(
+          {
+            profileId,
+            guestName: trimmedName,
+            existingParticipantId: duplicateCheck.id,
+          },
+          finalTraceId
+        ))
+        return {
+          ok: false,
+          error: `A guest with the name "${trimmedName}" already exists in this session. Please use a different name.`,
+          traceId: finalTraceId,
+        }
+      }
+    }
+
     logInfo("join_participant_check", withTrace(
       {
         existingParticipantId: existingParticipant?.id,
         existingStatus: existingParticipant?.status,
+        profileId: profileId || null,
       },
       finalTraceId
     ))
@@ -417,7 +616,7 @@ export async function joinSession(
 
     const targetStatus = statusResult as ParticipantStatus
 
-    // Upsert participant
+    // Upsert participant (include user email for authenticated users to enable user-specific lookups)
     const upsertResult = await upsertParticipant(
       adminSupabase,
       session.id,
@@ -425,7 +624,8 @@ export async function joinSession(
       trimmedPhone,
       guestKey,
       targetStatus,
-      existingParticipant?.id
+      existingParticipant?.id,
+      userEmail
     )
 
     // Handle duplicate key error (idempotent join)
@@ -446,10 +646,10 @@ export async function joinSession(
           finalTraceId
         ))
 
-        // Revalidate the session page
-        if (session.host_slug && publicCode) {
-          revalidatePath(`/${session.host_slug}/${publicCode}`)
-        }
+    // Revalidate the session page
+    if (session.host_slug && publicCode) {
+      revalidatePath(`/${session.host_slug}/${publicCode}`)
+    }
 
         return {
           ok: true,
@@ -470,15 +670,15 @@ export async function joinSession(
       if (session.host_slug && publicCode) {
         revalidatePath(`/${session.host_slug}/${publicCode}`)
       }
-      
+
       return {
         ok: true,
         participantId: null,
         alreadyJoined: true,
         waitlisted: false,
         traceId: finalTraceId,
-      }
     }
+  }
 
     // Handle other errors
     if ("error" in upsertResult) {
@@ -511,9 +711,9 @@ export async function joinSession(
     ))
 
     // Revalidate the session page
-    if (session.host_slug && publicCode) {
-      revalidatePath(`/${session.host_slug}/${publicCode}`)
-    }
+  if (session.host_slug && publicCode) {
+    revalidatePath(`/${session.host_slug}/${publicCode}`)
+  }
 
     return {
       ok: true,

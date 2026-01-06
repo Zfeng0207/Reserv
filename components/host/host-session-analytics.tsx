@@ -42,6 +42,7 @@ interface AnalyticsData {
   }
   acceptedList: Array<{ id: string; display_name: string; created_at: string }>
   declinedList: Array<{ id: string; display_name: string; created_at: string }>
+  waitlistedList: Array<{ id: string; display_name: string; created_at: string }>
   viewedCount: number
   pricePerPerson: number | null
   sessionStatus: string
@@ -97,6 +98,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
             payments: result.payments,
             acceptedList: result.acceptedList,
             declinedList: result.declinedList,
+            waitlistedList: result.waitlistedList,
             viewedCount: result.viewedCount,
             pricePerPerson: result.pricePerPerson,
             sessionStatus: result.sessionStatus,
@@ -135,6 +137,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
           payments: result.payments,
           acceptedList: result.acceptedList,
           declinedList: result.declinedList,
+          waitlistedList: result.waitlistedList,
           viewedCount: result.viewedCount,
           pricePerPerson: result.pricePerPerson,
           sessionStatus: result.sessionStatus,
@@ -272,15 +275,19 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
         sessionId,
       }, traceId))
 
-      // Optimistic update
+      // Optimistic update - check if participant was confirmed or waitlisted
       if (analytics) {
+        const wasConfirmed = analytics.acceptedList.some(p => p.id === participantToRemove.id)
         setAnalytics({
           ...analytics,
           attendance: {
             ...analytics.attendance,
-            accepted: Math.max(0, analytics.attendance.accepted - 1),
+            accepted: wasConfirmed ? Math.max(0, analytics.attendance.accepted - 1) : analytics.attendance.accepted,
           },
           acceptedList: analytics.acceptedList.filter(
+            (p) => p.id !== participantToRemove.id
+          ),
+          waitlistedList: analytics.waitlistedList.filter(
             (p) => p.id !== participantToRemove.id
           ),
         })
@@ -543,34 +550,81 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
               </div>
             </div>
             
-            {analytics.acceptedList.length > 0 ? (
-              <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
-                {analytics.acceptedList.map((participant) => (
-                  <div
-                    key={participant.id}
-                    className={cn(
-                      "relative flex-shrink-0 px-3 py-2 rounded-full text-sm font-medium",
-                      uiMode === "dark"
-                        ? "bg-white/10 text-white border border-white/20"
-                        : "bg-black/10 text-black border border-black/20"
-                    )}
-                  >
-                    {participant.display_name}
-                    <button
-                      onClick={() => handleOpenRemoveDialog(participant)}
-                      className={cn(
-                        "absolute -top-1 -right-1 h-6 w-6 rounded-full flex items-center justify-center",
-                        "transition-colors",
-                        uiMode === "dark"
-                          ? "bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30"
-                          : "bg-red-500/20 hover:bg-red-500/30 text-red-600 border border-red-500/30"
-                      )}
-                      aria-label={`Remove ${participant.display_name}`}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
+            {(analytics.acceptedList.length > 0 || analytics.waitlistedList.length > 0) ? (
+              <div className="space-y-3">
+                {/* Confirmed participants */}
+                {analytics.acceptedList.length > 0 && (
+                  <div className="space-y-2">
+                    <p className={cn("text-xs font-medium", uiMode === "dark" ? "text-white/70" : "text-black/70")}>
+                      Confirmed ({analytics.acceptedList.length})
+                    </p>
+                    <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
+                      {analytics.acceptedList.map((participant) => (
+                        <div
+                          key={participant.id}
+                          className={cn(
+                            "relative flex-shrink-0 px-3 py-2 rounded-full text-sm font-medium pr-8",
+                            uiMode === "dark"
+                              ? "bg-white/10 text-white border border-white/20"
+                              : "bg-black/10 text-black border border-black/20"
+                          )}
+                        >
+                          {participant.display_name}
+                          <div className="absolute -top-1 -right-1 flex gap-1">
+                            <button
+                              onClick={() => handleOpenRemoveDialog(participant)}
+                              className={cn(
+                                "h-5 w-5 rounded-full flex items-center justify-center transition-colors",
+                                "bg-red-500 hover:bg-red-600 text-white",
+                                "mt-2"
+                              )}
+                              aria-label={`Remove ${participant.display_name}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ))}
+                )}
+
+                {/* Waitlisted participants */}
+                {analytics.waitlistedList.length > 0 && (
+                  <div className="space-y-2">
+                    <p className={cn("text-xs font-medium", uiMode === "dark" ? "text-white/70" : "text-black/70")}>
+                      Waitlist ({analytics.waitlistedList.length})
+                    </p>
+                    <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
+                      {analytics.waitlistedList.map((participant) => (
+                        <div
+                          key={participant.id}
+                          className={cn(
+                            "relative flex-shrink-0 px-3 py-2 rounded-full text-sm font-medium pr-8",
+                            uiMode === "dark"
+                              ? "bg-amber-500/10 text-amber-200 border border-amber-500/30"
+                              : "bg-amber-500/10 text-amber-700 border border-amber-500/30"
+                          )}
+                        >
+                          {participant.display_name}
+                          <div className="absolute -top-1 -right-1 flex gap-1">
+                            <button
+                              onClick={() => handleOpenRemoveDialog(participant)}
+                              className={cn(
+                                "h-5 w-5 rounded-full flex items-center justify-center transition-colors",
+                                "bg-red-500 hover:bg-red-600 text-white",
+                                "mt-2"
+                              )}
+                              aria-label={`Remove ${participant.display_name}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <p className={cn("text-sm text-center py-4", uiMode === "dark" ? "text-white/40" : "text-black/40")}>

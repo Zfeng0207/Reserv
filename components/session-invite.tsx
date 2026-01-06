@@ -134,6 +134,7 @@ interface SessionInviteProps {
   payingForParticipantName?: string | null // Name of participant being paid for
   isFull?: boolean // Whether the session is at capacity
   joinedCount?: number // Number of confirmed participants
+  participantName?: string | null // Name of the current participant (for success message)
 }
 
 // Swipe to Join Slider Component (iPhone-style)
@@ -385,6 +386,7 @@ export function SessionInvite({
   payingForParticipantName = null,
   isFull = false,
   joinedCount = 0,
+  participantName = null,
 }: SessionInviteProps) {
   // Detect if this is an empty/new session
   const isEmptySession = !sessionId || sessionId === "new" || sessionId === "edit"
@@ -523,10 +525,10 @@ export function SessionInvite({
   // Handle share invite link - opens PublishShareSheet
   const handleShareInviteLink = async () => {
     const { getInviteShareUrl } = await import("@/lib/invite-url")
-    
+
     // Generate URL from props or current URL
     const inviteUrl = getInviteShareUrl({ hostSlug, publicCode })
-    
+
     if (!inviteUrl || !hostSlug || !publicCode) {
       // If session is not published, show helpful message
       if (!publicCode) {
@@ -542,15 +544,15 @@ export function SessionInvite({
           variant: "destructive",
         })
       }
-      return
-    }
+        return
+      }
 
     // Set up the share sheet with the invite URL
     setPublishedUrl(inviteUrl)
     setPublishedHostSlug(hostSlug)
     setPublishedCode(publicCode)
     setPublishedHostName(initialHostName || null)
-    setIsShareFromButton(true) // Mark as opened from share button
+      setIsShareFromButton(true) // Mark as opened from share button
     setPublishShareSheetOpen(true) // Opens the share sheet
   }
 
@@ -1447,7 +1449,7 @@ export function SessionInvite({
     if (typeof window === "undefined") return
 
     const traceId = newTraceId("upload")
-    
+
     // Get guest key for participant identification
     const { getOrCreateGuestKey } = await import("@/lib/guest-key")
     const guestKey = getOrCreateGuestKey()
@@ -1828,25 +1830,25 @@ export function SessionInvite({
     const validation = validateBeforePublish()
     if (!validation.ok) return
 
-      if (!isAuthenticated) {
-        // Store intent to publish after login
+    if (!isAuthenticated) {
+      // Store intent to publish after login
         console.log("[AUTH] Publish requires login - saving draft and redirect URL", {
           currentPath: typeof window !== "undefined" ? window.location.pathname : "unknown",
           hasDraft: !!draftKey,
         })
         
-        if (typeof window !== "undefined") {
+      if (typeof window !== "undefined") {
           // Draft is auto-saved via useEffect, so we just need to store publish intent
-          sessionStorage.setItem("pending_publish", "true")
+        sessionStorage.setItem("pending_publish", "true")
           // Capture current URL for redirect after login
           const returnTo = getCurrentReturnTo()
           // Set post-auth redirect
           setPostAuthRedirect(returnTo)
           console.log("[AUTH] Publish gated - redirect URL stored", { returnTo })
-        }
-        setLoginDialogOpen(true)
-        return
       }
+      setLoginDialogOpen(true)
+      return
+    }
       
       console.log("[AUTH] Publish proceeding - user authenticated", { userId: authUser?.id })
 
@@ -3051,9 +3053,9 @@ export function SessionInvite({
                         <div className="flex items-start gap-3">
                           <Users className={cn("w-5 h-5 text-white/60 mt-0.5", (!isEditMode || isPreviewMode) && HERO_ICON_SHADOW)} />
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className={cn("text-base text-white", (!eventCapacity || eventCapacity === 0) && "italic opacity-60", (!isEditMode || isPreviewMode) && HERO_META_SHADOW)}>
-                              {eventCapacity && eventCapacity > 0 ? `${eventCapacity} spots total` : "Enter number of spots"}
-                            </p>
+                          <p className={cn("text-base text-white", (!eventCapacity || eventCapacity === 0) && "italic opacity-60", (!isEditMode || isPreviewMode) && HERO_META_SHADOW)}>
+                            {eventCapacity && eventCapacity > 0 ? `${eventCapacity} spots total` : "Enter number of spots"}
+                          </p>
                             {/* FULL badge when session is at capacity (public view only) */}
                             {!isEditMode && !isPreviewMode && isFull && (
                               <Badge className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-red-500/20 text-red-200 border border-red-500/30 backdrop-blur">
@@ -3205,9 +3207,9 @@ export function SessionInvite({
                 <div className="flex items-center justify-between mb-2">
                   <h2 className={`text-lg font-semibold ${strongText}`}>Going</h2>
                   <div className="flex items-center gap-2">
-                    <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30">
+                  <Badge className="bg-[var(--theme-accent)]/20 text-[var(--theme-accent-light)] border-[var(--theme-accent)]/30">
                       {joinedCount > 0 ? joinedCount : demoParticipants.length} / {eventCapacity || "∞"}
-                    </Badge>
+                  </Badge>
                     {isFull && eventCapacity && eventCapacity > 0 && (
                       <Badge className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-red-500/20 text-red-200 border border-red-500/30 backdrop-blur">
                         <AlertTriangle className="w-3 h-3" />
@@ -3258,7 +3260,7 @@ export function SessionInvite({
                 {/* Waitlist section - shown below joined participants */}
                 {!isEditMode && !isPreviewMode && waitlist && waitlist.length > 0 && (
                   <div className="mt-4 pt-4 border-t border-white/10">
-                    <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-2">
                       <h3 className={cn("text-xs font-medium uppercase tracking-wide", mutedText)}>Waitlist</h3>
                       <Badge className={cn(
                         "text-[10px] px-1.5 py-0.5",
@@ -3267,8 +3269,8 @@ export function SessionInvite({
                           : "bg-amber-500/10 text-amber-600/70 border-amber-500/20"
                       )}>
                         {waitlist.length}
-                      </Badge>
-                    </div>
+                    </Badge>
+                  </div>
                     <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
                       {waitlist.map((participant) => (
                         <div
@@ -3282,13 +3284,13 @@ export function SessionInvite({
                           )}
                         >
                           {participant.display_name}
-                        </div>
+                              </div>
                       ))}
-                    </div>
-                  </div>
+                            </div>
+                          </div>
                 )}
-              </Card>
-            </motion.div>
+                </Card>
+              </motion.div>
           )}
 
           {isEditMode && !isPreviewMode && (
@@ -4092,7 +4094,7 @@ export function SessionInvite({
                   {/* Title with celebration animation */}
                   <div className="flex items-center gap-2">
                     <p className="text-base font-semibold text-white">
-                      🎉 You're in!
+                      🎉 You're in{participantName ? `, ${participantName}` : ""}!
                     </p>
                     {/* Celebration sparkles animation */}
                     <AnimatePresence>
@@ -4137,15 +4139,11 @@ export function SessionInvite({
                 "shadow-[0_0_0_1px_rgba(245,158,11,0.12)] shadow-amber-500/10",
                 isPreviewMode && "pointer-events-none"
               )}>
-                <div className="flex flex-col gap-1 pb-2">
+                {/* Title and share button - top row */}
+                <div className="flex items-center justify-between gap-2">
                   <p className={`text-base font-semibold ${uiMode === "dark" ? "text-white" : "text-black"}`}>
                     You're on the waitlist ✅
                   </p>
-                  <p className={`text-xs ${uiMode === "dark" ? "text-white/70" : "text-black/70"}`}>
-                    We'll let you know if a spot opens.
-                  </p>
-                </div>
-                <div className="flex justify-center items-center gap-2 w-full">
                   {actualSessionId && !demoMode && (
                     <Button
                       onClick={(e) => {
@@ -4159,7 +4157,7 @@ export function SessionInvite({
                       size="icon"
                       disabled={isPreviewMode}
                       className={cn(
-                        "h-12 w-12 rounded-full",
+                        "h-8 w-8 rounded-full shrink-0",
                         uiMode === "dark"
                           ? "text-white hover:bg-white/10"
                           : "text-black hover:bg-black/10",
@@ -4171,6 +4169,10 @@ export function SessionInvite({
                     </Button>
                   )}
                 </div>
+                {/* Subtitle */}
+                <p className={`text-xs ${uiMode === "dark" ? "text-white/70" : "text-black/70"}`}>
+                  We'll let you know if a spot opens.
+                </p>
               </div>
             ) : (
               /* Default state - show swipe slider (rsvpState is "none") */
@@ -4198,21 +4200,21 @@ export function SessionInvite({
                     label={isFull ? "Join waitlist" : "Join session"}
                     isJoined={String(rsvpState) === "joined"}
                   />
-                  {actualSessionId && !demoMode && (
-                    <Button
-                      onClick={handleShareInviteLink}
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        "h-12 w-12 rounded-full",
-                        uiMode === "dark"
-                          ? "text-white hover:bg-white/10"
-                          : "text-black hover:bg-black/10"
-                      )}
-                      aria-label="Share invite link"
-                    >
-                      <Share2 className="h-5 w-5" />
-                    </Button>
+                      {actualSessionId && !demoMode && (
+                        <Button
+                          onClick={handleShareInviteLink}
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "h-12 w-12 rounded-full",
+                            uiMode === "dark"
+                              ? "text-white hover:bg-white/10"
+                              : "text-black hover:bg-black/10"
+                          )}
+                          aria-label="Share invite link"
+                        >
+                          <Share2 className="h-5 w-5" />
+                        </Button>
                   )}
                 </div>
               </div>

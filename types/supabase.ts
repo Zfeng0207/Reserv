@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.1"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       host_settings: {
@@ -87,6 +62,7 @@ export type Database = {
           guest_key: string | null
           id: string
           notes: string | null
+          profile_id: string | null
           session_id: string
           status: Database["public"]["Enums"]["participant_status"]
         }
@@ -98,6 +74,7 @@ export type Database = {
           guest_key?: string | null
           id?: string
           notes?: string | null
+          profile_id?: string | null
           session_id: string
           status?: Database["public"]["Enums"]["participant_status"]
         }
@@ -109,6 +86,7 @@ export type Database = {
           guest_key?: string | null
           id?: string
           notes?: string | null
+          profile_id?: string | null
           session_id?: string
           status?: Database["public"]["Enums"]["participant_status"]
         }
@@ -481,9 +459,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       ocr_status: ["pending", "success", "failed"],

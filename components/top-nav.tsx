@@ -20,6 +20,7 @@ import { StardustButton } from "@/components/ui/stardust-button"
 import { LiveInviteGuardModal } from "@/components/host/live-invite-guard-modal"
 import { getHostLiveSessions } from "@/app/host/sessions/[id]/actions"
 import { getCurrentReturnTo, setPostAuthRedirect } from "@/lib/post-auth-redirect"
+import { useToast } from "@/hooks/use-toast"
 
 interface TopNavProps {
   showCreateNow?: boolean
@@ -59,9 +60,18 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
   }, [])
 
   const handleSignOut = async () => {
-    await logOut()
-    // Refresh to update UI state
-    window.location.href = "/"
+    try {
+      await logOut()
+      toast({ title: "Signed out" })
+      // Stay on current page, refresh server components if needed
+      router.refresh()
+    } catch (error: any) {
+      toast({ 
+        title: "Sign out failed", 
+        description: error?.message || "Failed to sign out",
+        variant: "destructive"
+      })
+    }
   }
 
   const refetchLiveSessions = async () => {

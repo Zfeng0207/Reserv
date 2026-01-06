@@ -164,8 +164,18 @@ export function HostSettingsClient() {
   }
 
   const handleSignOut = async () => {
-    await logOut()
-    window.location.href = "/auth/login"
+    try {
+      await logOut()
+      toast({ title: "Signed out" })
+      // Stay on current page, refresh server components if needed
+      router.refresh()
+    } catch (error: any) {
+      toast({ 
+        title: "Sign out failed", 
+        description: error?.message || "Failed to sign out",
+        variant: "destructive"
+      })
+    }
   }
 
   const handleDeleteAllDrafts = async () => {

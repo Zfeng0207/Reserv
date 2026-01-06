@@ -31,8 +31,9 @@ export async function GET(request: Request) {
     hasCookie: cookies.includes('postAuthRedirect'),
   })
 
-  // Determine redirect target (priority: redirectTo query > next query > cookie > home)
-  let redirectTarget = '/home' // Default to home instead of root
+  // Determine redirect target (priority: redirectTo query > next query > cookie > current referer > home)
+  // Start with null to detect if we found a valid target
+  let redirectTarget: string | null = null
 
   // Try redirectTo query param first
   if (redirectToQuery) {
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
   }
 
   // Fallback to next param
-  if (redirectTarget === '/home' && nextParam) {
+  if (!redirectTarget && nextParam) {
     try {
       const url = new URL(nextParam, origin)
       if (url.origin === origin) {
@@ -63,18 +64,58 @@ export async function GET(request: Request) {
   }
 
   // Fallback to cookie if no query param
-  if (redirectTarget === '/home') {
-    const cookieRedirect = getPostAuthRedirectFromCookie(cookies, '/home')
-    if (cookieRedirect !== '/home') {
+  if (!redirectTarget) {
+    const cookieRedirect = getPostAuthRedirectFromCookie(cookies, '')
+    if (cookieRedirect && cookieRedirect !== '/') {
       redirectTarget = cookieRedirect
       logInfo("auth_callback_redirect_from_cookie", { redirectTarget })
     }
   }
 
+  // Fallback to referer header (where user came from)
+  if (!redirectTarget) {
+    const referer = request.headers.get('referer')
+    if (referer) {
+      try {
+        const refererUrl = new URL(referer)
+        if (refererUrl.origin === origin && !refererUrl.pathname.startsWith('/auth')) {
+          redirectTarget = refererUrl.pathname + refererUrl.search + refererUrl.hash
+          logInfo("auth_callback_redirect_from_referer", { redirectTarget })
+        }
+      } catch (e) {
+        logWarn("auth_callback_invalid_referer", { referer, error: String(e) })
+      }
+    }
+  }
+
+  // Final fallback to home
+  if (!redirectTarget) {
+    redirectTarget = '/home'
+    logInfo("auth_callback_redirect_fallback_to_home", {})
+  }
+
   // Validate redirect target (prevent redirect loops and auth paths)
   if (redirectTarget.startsWith('/auth') || redirectTarget === '/') {
-    redirectTarget = '/home'
-    logWarn("auth_callback_redirect_sanitized", { original: redirectTarget, sanitized: '/home' })
+    // If redirect target is invalid, try to use referer as fallback before defaulting to home
+    const referer = request.headers.get('referer')
+    if (referer) {
+      try {
+        const refererUrl = new URL(referer)
+        if (refererUrl.origin === origin && !refererUrl.pathname.startsWith('/auth') && refererUrl.pathname !== '/') {
+          redirectTarget = refererUrl.pathname + refererUrl.search + refererUrl.hash
+          logInfo("auth_callback_redirect_sanitized_to_referer", { original: redirectTarget, sanitized: redirectTarget })
+        } else {
+          redirectTarget = '/home'
+          logWarn("auth_callback_redirect_sanitized_to_home", { original: redirectTarget, sanitized: '/home' })
+        }
+      } catch (e) {
+        redirectTarget = '/home'
+        logWarn("auth_callback_redirect_sanitized_to_home", { original: redirectTarget, sanitized: '/home' })
+      }
+    } else {
+      redirectTarget = '/home'
+      logWarn("auth_callback_redirect_sanitized_to_home", { original: redirectTarget, sanitized: '/home' })
+    }
   }
 
   if (!code) {

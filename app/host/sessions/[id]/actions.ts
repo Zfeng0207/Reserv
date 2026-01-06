@@ -340,6 +340,7 @@ export async function getSessionAnalytics(sessionId: string): Promise<
       }
       acceptedList: Array<{ id: string; display_name: string; created_at: string }>
       declinedList: Array<{ id: string; display_name: string; created_at: string }>
+      waitlistedList: Array<{ id: string; display_name: string; created_at: string }>
       viewedCount: number // Placeholder for now
       pricePerPerson: number | null
       sessionStatus: string
@@ -407,6 +408,15 @@ export async function getSessionAnalytics(sessionId: string): Promise<
         created_at: p.created_at,
       })) || []
 
+  const waitlistedList =
+    participants
+      ?.filter((p) => p.status === "waitlisted")
+      .map((p) => ({
+        id: p.id,
+        display_name: p.display_name,
+        created_at: p.created_at,
+      })) || []
+
   // Get payment data from payment_proofs table
   // Schema: payment_proofs table with payment_status enum: "pending_review" | "approved" | "rejected"
   // Cash payments are stored as payment_proofs with payment_status='approved' and proof_image_url=null
@@ -460,6 +470,7 @@ export async function getSessionAnalytics(sessionId: string): Promise<
     },
     acceptedList,
     declinedList,
+    waitlistedList,
     viewedCount: 0, // Placeholder - no backend tracking yet
     pricePerPerson,
     sessionStatus: session.status as string,
@@ -1362,6 +1373,63 @@ export async function addParticipant(
  * Remove a participant (host-only)
  * Hard-deletes the participant row
  */
+/**
+ * Update participant status (move between confirmed and waitlisted)
+ */
+export async function updateParticipantStatus(
+  sessionId: string,
+  participantId: string,
+  newStatus: "confirmed" | "waitlisted"
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  // Verify session belongs to user
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .select("host_id")
+    .eq("id", sessionId)
+    .single()
+
+  if (sessionError || !session) {
+    return { ok: false, error: "Session not found" }
+  }
+
+  if (session.host_id !== userId) {
+    return { ok: false, error: "Unauthorized: You don't own this session" }
+  }
+
+  // Verify participant exists and belongs to this session
+  const { data: participant, error: participantError } = await supabase
+    .from("participants")
+    .select("id, session_id, status")
+    .eq("id", participantId)
+    .eq("session_id", sessionId)
+    .single()
+
+  if (participantError || !participant) {
+    return { ok: false, error: "Participant not found" }
+  }
+
+  // Update participant status
+  const { error: updateError } = await supabase
+    .from("participants")
+    .update({ status: newStatus })
+    .eq("id", participantId)
+
+  if (updateError) {
+    return { ok: false, error: updateError.message || "Failed to update participant status" }
+  }
+
+  revalidatePath(`/host/sessions/${sessionId}/edit`)
+
+  return { ok: true }
+}
+
 export async function removeParticipant(
   sessionId: string,
   participantId: string

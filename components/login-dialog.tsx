@@ -11,7 +11,6 @@ import { handleGoogleOAuth, handleEmailAuth, handleEmailOtpVerify } from "@/lib/
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/lib/hooks/use-auth"
 import { getCurrentReturnTo, setPostAuthRedirect, consumePostAuthRedirect } from "@/lib/post-auth-redirect"
-import { getCurrentUrl, setReturnTo, consumeReturnTo } from "@/lib/return-to"
 import { useRouter } from "next/navigation"
 
 const COOLDOWN_S = 60
@@ -71,7 +70,7 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
       
       // Redirect to stored URL (for OTP verification which happens in-page)
       // Try new return-to helper first, fallback to post-auth-redirect
-      const redirectTo = consumeReturnTo() || consumePostAuthRedirect()
+      const redirectTo = consumePostAuthRedirect()
       console.log("[auth] signed_in redirect", { returnTo: redirectTo })
       if (redirectTo && redirectTo !== "/") {
         router.push(redirectTo)
@@ -127,9 +126,8 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
   const handleGoogleClick = async () => {
     try {
       // Capture current URL before starting OAuth
-      const returnTo = getCurrentUrl()
-      setReturnTo(returnTo)
-      // Also set post-auth redirect for compatibility
+      const returnTo = getCurrentReturnTo()
+      // Set post-auth redirect
       setPostAuthRedirect(returnTo)
       
       await handleGoogleOAuth(returnTo)
@@ -183,9 +181,8 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
     }
 
     // Capture current URL before sending OTP
-    const returnTo = getCurrentUrl()
-    setReturnTo(returnTo)
-    // Also set post-auth redirect for compatibility
+    const returnTo = getCurrentReturnTo()
+    // Set post-auth redirect
     setPostAuthRedirect(returnTo)
 
     setIsSending(true)

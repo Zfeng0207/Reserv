@@ -127,13 +127,15 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
     try {
       // Capture current URL before starting OAuth
       const returnTo = getCurrentReturnTo()
+      console.log("[AUTH] Google login clicked", { returnTo, currentPath: window.location.pathname })
+      
       // Set post-auth redirect
       setPostAuthRedirect(returnTo)
       
       await handleGoogleOAuth(returnTo)
-      // Don't close dialog immediately - Supabase will redirect if successful
+      // Note: handleGoogleOAuth will redirect to Google, so code after this won't run
     } catch (error: any) {
-      // Handle error - show toast notification
+      console.error("[AUTH] Google OAuth error:", error)
       toast({
         title: "Authentication Error",
         description: error?.message || "Google OAuth is not enabled. Please enable it in your Supabase dashboard.",
@@ -182,6 +184,8 @@ export function LoginDialog({ open, onOpenChange, onContinueAsGuest }: LoginDial
 
     // Capture current URL before sending OTP
     const returnTo = getCurrentReturnTo()
+    console.log("[AUTH] Email login initiated", { email: email.trim(), returnTo, currentPath: window.location.pathname })
+    
     // Set post-auth redirect
     setPostAuthRedirect(returnTo)
 

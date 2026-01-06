@@ -220,6 +220,7 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
                 onClick={() => {
                   // Capture current URL before opening login dialog
                   const returnTo = getCurrentReturnTo()
+                  console.log("[AUTH] Navbar login clicked", { returnTo, currentPath: window.location.pathname })
                   // Set post-auth redirect
                   setPostAuthRedirect(returnTo)
                   setLoginDialogOpen(true)

@@ -106,22 +106,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data: subscription } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log("[AUTH] Auth state changed", { event, hasSession: !!session, userId: session?.user?.id });
+        
         setAuthUser(session?.user || undefined);
         
         // Handle redirect after sign-in (client-side fallback for OTP verification)
+        // Note: OAuth redirects are handled by /auth/callback route
+        // This is mainly for OTP verification which happens in-page
         if (event === "SIGNED_IN" && typeof window !== "undefined") {
           try {
-            const { consumeReturnTo } = await import("@/lib/return-to");
-            const returnTo = consumeReturnTo();
-            if (returnTo && returnTo !== "/" && !returnTo.startsWith("/auth")) {
-              console.log("[auth] signed_in redirect (auth provider)", { returnTo });
+            const { consumePostAuthRedirect } = await import("@/lib/post-auth-redirect");
+            const returnTo = consumePostAuthRedirect();
+            if (returnTo && returnTo !== "/" && returnTo !== "/home" && !returnTo.startsWith("/auth")) {
+              console.log("[AUTH] Signed in - redirecting to stored path", { returnTo });
               // Use setTimeout to ensure state updates complete first
               setTimeout(() => {
                 window.location.href = returnTo;
               }, 100);
+            } else {
+              console.log("[AUTH] Signed in - no redirect needed", { returnTo });
             }
           } catch (error) {
-            console.error("[auth] redirect failed in auth provider", error);
+            console.error("[AUTH] Redirect failed in auth provider", error);
           }
         }
       }

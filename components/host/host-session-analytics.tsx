@@ -524,9 +524,9 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
                 Attendees
               </h3>
               <div className="flex items-center gap-2">
-                <span className={cn("text-xs", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
-                  {analytics.attendance.accepted} going · {spotsLeft} spots left
-                </span>
+              <span className={cn("text-xs", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+                {analytics.attendance.accepted} going · {spotsLeft} spots left
+              </span>
                 <Button
                   onClick={handleOpenAddDialog}
                   variant="ghost"

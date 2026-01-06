@@ -33,10 +33,10 @@ export default async function SharedSessionPage({
   const { code: sessionId } = await params
   const supabase = await createClient()
 
-  // Fetch session (public read)
+  // Fetch session (public read) - explicit fields only
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("*")
+    .select("id, title, host_name, host_slug, host_id, cover_url, status, public_code, start_at, end_at, location, sport, capacity, waitlist_enabled, description, payment_account_name, payment_account_number, payment_bank_name, created_at, updated_at")
     .eq("id", sessionId)
     .single()
 

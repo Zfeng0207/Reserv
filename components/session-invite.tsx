@@ -1830,17 +1830,25 @@ export function SessionInvite({
 
       if (!isAuthenticated) {
         // Store intent to publish after login
+        console.log("[AUTH] Publish requires login - saving draft and redirect URL", {
+          currentPath: typeof window !== "undefined" ? window.location.pathname : "unknown",
+          hasDraft: !!draftKey,
+        })
+        
         if (typeof window !== "undefined") {
+          // Draft is auto-saved via useEffect, so we just need to store publish intent
           sessionStorage.setItem("pending_publish", "true")
           // Capture current URL for redirect after login
           const returnTo = getCurrentReturnTo()
           // Set post-auth redirect
           setPostAuthRedirect(returnTo)
-          console.log("[auth] setReturnTo from publish", { url: returnTo })
+          console.log("[AUTH] Publish gated - redirect URL stored", { returnTo })
         }
         setLoginDialogOpen(true)
         return
       }
+      
+      console.log("[AUTH] Publish proceeding - user authenticated", { userId: authUser?.id })
 
     // Check if session is live (status === "open")
     const isLive = sessionStatus === "open"

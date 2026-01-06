@@ -6,7 +6,7 @@ import { SessionInvite } from "@/components/session-invite"
 import { GuestRSVPDialog } from "./guest-rsvp-dialog"
 import { LoginDialog } from "@/components/login-dialog"
 import { getCurrentReturnTo, setPostAuthRedirect } from "@/lib/post-auth-redirect"
-import { joinSession, getParticipantRSVPStatus, getUnpaidParticipants } from "@/app/session/[id]/actions"
+import { joinSession, getParticipantRSVPStatus, getUnpaidParticipants, getSessionParticipants } from "@/app/session/[id]/actions"
 import { log, logInfo, logWarn, logError, logGrouped, newTraceId, debugEnabled, withTrace } from "@/lib/logger"
 import { DebugPanel } from "@/components/debug-panel"
 import { useAuth } from "@/lib/hooks/use-auth"
@@ -315,6 +315,22 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
     if (!isAuthenticated && !guestKey) {
       setRsvpState("none")
       setStoredParticipantInfo(null)
+      setIsLoadingRSVP(false)
+      return
+    }
+
+    // NEW: Clear stale state if user just signed out (was authenticated, now not)
+    // This prevents showing "joined" state from previous authenticated session
+    if (!isAuthenticated) {
+      // Clear stored participant info from localStorage
+      if (publicCode) {
+        const storageKey = `reserv_rsvp_${publicCode}`
+        localStorage.removeItem(storageKey)
+      }
+      // Note: We keep guestKey for true guests, only clear participant info
+      
+      setStoredParticipantInfo(null)
+      setRsvpState("none")
       setIsLoadingRSVP(false)
       return
     }
@@ -634,10 +650,25 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         setSpotsLeft(remaining)
       }
       
-      // No router.refresh() needed - optimistic update is sufficient
-      // The server action calls revalidatePath() which invalidates the cache
-      // The improved sync logic in useEffect will handle server data updates when props change
-      // This avoids RLS issues that router.refresh() was causing for authenticated non-host users
+      // Refetch participants and waitlist from server - same logic as session control
+      // This ensures both confirmed and waitlist stay in sync with server
+      if (publicCode) {
+        try {
+          const refetchResult = await getSessionParticipants(publicCode)
+          if (refetchResult.ok) {
+            // Update both participants and waitlist from server response
+            setParticipants(refetchResult.participants.map(p => ({ ...p, status: "confirmed" as const })))
+            setWaitlist(refetchResult.waitlist.map(p => ({ ...p, status: "waitlisted" as const })))
+            console.log("[refetch] Updated participants and waitlist from server", {
+              participantsCount: refetchResult.participants.length,
+              waitlistCount: refetchResult.waitlist.length
+            })
+          }
+        } catch (error) {
+          console.error("[refetch] Failed to refetch participants", error)
+          // Don't fail the join if refetch fails - optimistic update is already applied
+        }
+      }
     } catch (error: any) {
       const errorMsg = error?.message || "Something went wrong. Please try again."
       logError("join_failed_client", withTrace({

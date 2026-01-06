@@ -29,6 +29,7 @@ interface TopNavProps {
 
 export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps) {
   const { authUser, logOut } = useAuth()
+  const { toast } = useToast()
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
   const [liveInvitesModalOpen, setLiveInvitesModalOpen] = useState(false)
   const [liveSessions, setLiveSessions] = useState<
@@ -61,7 +62,7 @@ export function TopNav({ showCreateNow = false, onContinueAsGuest }: TopNavProps
 
   const handleSignOut = async () => {
     try {
-      await logOut()
+    await logOut()
       toast({ title: "Signed out" })
       // Stay on current page, refresh server components if needed
       router.refresh()

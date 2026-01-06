@@ -7,11 +7,11 @@ import { logInfo, logError, logWarn, withTrace, newTraceId } from "@/lib/logger"
 /**
  * Get participant RSVP status for a session (server-driven, user-specific)
  * For authenticated users: checks by email
- * For guests: checks by profile_id (sessionId + guestName) or guest_key as fallback
+ * For guests: checks by profile_id (guestKey UUID) or guest_key as fallback
  * Returns the current status if participant exists, null otherwise
  * 
  * This ensures join state is always fetched per current user/guest, not cached client-side
- * Guest identity is tied to name + session, not browser cookie
+ * Guest identity is tied to guestKey (UUID), ensuring each guest is unique even with same name
  */
 export async function getParticipantRSVPStatus(
   publicCode: string,
@@ -34,9 +34,9 @@ export async function getParticipantRSVPStatus(
     return { ok: false, error: "Session not found" }
   }
 
-  // Generate profile_id for guests (not authenticated users)
-  // Format: `${sessionId}-${guestName.trim().toLowerCase()}`
-  const profileId = !userEmail && guestName ? `${session.id}-${guestName.trim().toLowerCase()}` : null
+  // For guests: use guestKey as profile_id (UUID-based, unique per guest)
+  // This ensures each guest is unique even if they have the same name
+  const profileId = !userEmail && guestKey ? guestKey : null
 
   // For authenticated users: try to find participant by email or guest_key
   // For guests: find by profile_id first (name-based), then guest_key as fallback
@@ -73,7 +73,7 @@ export async function getParticipantRSVPStatus(
       error = emailError
     }
   } else if (profileId) {
-    // Guest user: check by profile_id first (name-based, prevents duplicate names)
+    // Guest user: check by profile_id (guestKey UUID) first - primary lookup
     const { data: profileMatch, error: profileError } = await supabase
       .from("participants")
       .select("id, status, display_name, guest_key, contact_email, profile_id")
@@ -300,7 +300,8 @@ async function handleDuplicateParticipant(
 
 /**
  * Upsert participant (insert or update)
- * For guests: generates profile_id from sessionId + guestName to ensure unique identity per session
+ * For guests: uses guestKey (UUID) as profile_id to ensure unique identity per guest
+ * This allows multiple guests with the same name to exist independently
  */
 async function upsertParticipant(
   adminSupabase: ReturnType<typeof createAdminClient>,
@@ -315,10 +316,9 @@ async function upsertParticipant(
   | { participantId: string; status: ParticipantStatus }
   | { error: string; code?: string; isDuplicate?: boolean }
 > {
-  // Generate profile_id for guests (not authenticated users)
-  // Format: `${sessionId}-${guestName.trim().toLowerCase()}`
-  // This ensures unique guest identity per session based on name
-  const profileId = !userEmail ? `${sessionId}-${name.trim().toLowerCase()}` : null
+  // For guests: use guestKey (UUID) as profile_id - ensures each guest is unique
+  // This allows multiple guests with the same name to exist independently
+  const profileId = !userEmail ? guestKey : null
 
   const payload = {
     session_id: sessionId,
@@ -326,7 +326,7 @@ async function upsertParticipant(
     contact_phone: phone,
     contact_email: userEmail || null, // Store email for authenticated users to enable user-specific lookups
     guest_key: guestKey,
-    profile_id: profileId, // Unique guest identifier per session
+    profile_id: profileId, // Unique guest identifier (guestKey UUID) - ensures each guest is unique
     status,
   }
 
@@ -462,14 +462,14 @@ export async function joinSession(
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     const userEmail = currentUser?.email || null
 
-    // Generate profile_id for guests (not authenticated users)
-    // Format: `${sessionId}-${guestName.trim().toLowerCase()}`
-    // This ensures unique guest identity per session based on name
-    const profileId = !userEmail ? `${session.id}-${trimmedName.toLowerCase()}` : null
+    // For guests: use guestKey (UUID) as profile_id - ensures each guest is unique
+    // This allows multiple guests with the same name to exist independently
+    // Note: profileId may be updated if guest name changes (see existing participant check below)
+    let profileId = !userEmail ? guestKey : null
 
     // Check for existing participant (idempotency check)
     // For authenticated users: check by email first, then guest_key
-    // For guests: check by profile_id first (name-based), then guest_key as fallback
+    // For guests: check by profile_id (guestKey) first, then guest_key as fallback
     let existingParticipant = null
     let participantCheckError = null
 
@@ -477,7 +477,7 @@ export async function joinSession(
       // Authenticated user: try email first
       const { data: emailMatch, error: emailError } = await supabase
         .from("participants")
-        .select("id, status")
+        .select("id, status, contact_email")
         .eq("session_id", session.id)
         .eq("contact_email", userEmail)
         .maybeSingle()
@@ -485,51 +485,90 @@ export async function joinSession(
       if (emailMatch) {
         existingParticipant = emailMatch
       } else if (guestKey) {
-        // Fallback to guest_key
+        // Fallback to guest_key - but only use it if it's an authenticated user's participant
+        // If it's a guest participant (no contact_email), don't use it - create new participant instead
         const { data: guestMatch, error: guestError } = await supabase
           .from("participants")
-          .select("id, status")
+          .select("id, status, contact_email")
           .eq("session_id", session.id)
           .eq("guest_key", guestKey)
           .maybeSingle()
 
-        existingParticipant = guestMatch
+        // Only use this participant if it belongs to an authenticated user (has contact_email)
+        // If it's a guest participant (no contact_email), ignore it and create a new one
+        if (guestMatch && guestMatch.contact_email) {
+          existingParticipant = guestMatch
+        }
+        // If guestMatch exists but has no contact_email, it's a guest participant - don't use it
         participantCheckError = guestError
       } else {
         participantCheckError = emailError
       }
     } else if (profileId) {
-      // Guest user: check by profile_id first (name-based, prevents duplicate names)
+      // Guest user: check by profile_id (guestKey UUID) first - primary lookup
       const { data: profileMatch, error: profileError } = await supabase
         .from("participants")
-        .select("id, status")
+        .select("id, status, display_name")
         .eq("session_id", session.id)
         .eq("profile_id", profileId)
         .maybeSingle()
 
       if (profileMatch) {
-        existingParticipant = profileMatch
+        // Only use existing participant if the name matches (idempotent join)
+        // If name is different, treat as new guest and create new participant with new profile_id
+        if (profileMatch.display_name === trimmedName) {
+          existingParticipant = profileMatch
+        } else {
+          // Name changed - this is a different guest, generate new profile_id
+          // Generate a new UUID for this new guest identity
+          const newProfileId = crypto.randomUUID()
+          // Update profileId to the new UUID so a new participant will be created
+          profileId = newProfileId
+          logInfo("join_guest_name_changed", withTrace(
+            {
+              existingName: profileMatch.display_name,
+              newName: trimmedName,
+              oldProfileId: profileId,
+              newProfileId,
+            },
+            finalTraceId
+          ))
+        }
       } else if (guestKey) {
         // Fallback to guest_key (for backward compatibility)
         const { data: guestMatch, error: guestError } = await supabase
           .from("participants")
-          .select("id, status")
+          .select("id, status, display_name, contact_email")
           .eq("session_id", session.id)
           .eq("guest_key", guestKey)
           .maybeSingle()
 
-        existingParticipant = guestMatch
+        // Only use if it's a guest participant (no contact_email) and name matches
+        if (guestMatch && !guestMatch.contact_email && guestMatch.display_name === trimmedName) {
+          existingParticipant = guestMatch
+        } else if (guestMatch && !guestMatch.contact_email && guestMatch.display_name !== trimmedName) {
+          // Name changed - generate new profile_id for new guest
+          profileId = crypto.randomUUID()
+          logInfo("join_guest_name_changed_fallback", withTrace(
+            {
+              existingName: guestMatch.display_name,
+              newName: trimmedName,
+              newProfileId: profileId,
+            },
+            finalTraceId
+          ))
+        }
         participantCheckError = guestError
       } else {
         participantCheckError = profileError
       }
     } else if (guestKey) {
-      // Legacy: guest with guest_key but no profile_id (shouldn't happen with new code)
+      // Legacy: guest with guest_key but no profile_id (for backward compatibility)
       const { data: guestMatch, error: guestError } = await supabase
-        .from("participants")
-        .select("id, status")
-        .eq("session_id", session.id)
-        .eq("guest_key", guestKey)
+    .from("participants")
+    .select("id, status")
+    .eq("session_id", session.id)
+    .eq("guest_key", guestKey)
         .maybeSingle()
 
       existingParticipant = guestMatch
@@ -544,22 +583,22 @@ export async function joinSession(
       ))
     }
 
-    // For guests: Check for duplicate name using profile_id BEFORE capacity check
-    // This prevents duplicate guest names in the same session
+    // Optional: Check for duplicate name by display_name (if you want to prevent same names)
+    // Note: This is optional - remove if you want to allow multiple guests with same name
     // Only check if we don't already have an existing participant (idempotent join)
-    if (!userEmail && profileId && !existingParticipant) {
+    if (!userEmail && !existingParticipant) {
       const { data: duplicateCheck, error: duplicateError } = await supabase
-        .from("participants")
+      .from("participants")
         .select("id, display_name")
         .eq("session_id", session.id)
-        .eq("profile_id", profileId)
+        .eq("display_name", trimmedName)
+        .is("contact_email", null) // Only check guest participants (not authenticated users)
         .maybeSingle()
 
       if (duplicateCheck) {
-        // Duplicate name found (different participant with same profile_id)
+        // Duplicate name found (different guest with same display_name)
         logWarn("join_duplicate_guest_name", withTrace(
           {
-            profileId,
             guestName: trimmedName,
             existingParticipantId: duplicateCheck.id,
           },

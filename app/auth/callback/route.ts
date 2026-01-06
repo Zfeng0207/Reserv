@@ -13,7 +13,8 @@ import { log, logInfo, logError, logWarn } from '@/lib/logger'
  * Priority for redirect target:
  * 1. redirectTo query param (if valid and same origin)
  * 2. postAuthRedirect cookie
- * 3. Default to /home
+ * 3. Referer header (if valid)
+ * 4. Default to / (root, never /home)
  */
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -88,15 +89,32 @@ export async function GET(request: Request) {
     }
   }
 
-  // Final fallback to home
+  // Final fallback: use referer or root path (never default to /home)
   if (!redirectTarget) {
-    redirectTarget = '/home'
-    logInfo("auth_callback_redirect_fallback_to_home", {})
+    const referer = request.headers.get('referer')
+    if (referer) {
+      try {
+        const refererUrl = new URL(referer)
+        if (refererUrl.origin === origin && !refererUrl.pathname.startsWith('/auth') && refererUrl.pathname !== '/') {
+          redirectTarget = refererUrl.pathname + refererUrl.search + refererUrl.hash
+          logInfo("auth_callback_redirect_fallback_to_referer", { redirectTarget })
+        } else {
+          redirectTarget = '/' // Use root instead of /home
+          logInfo("auth_callback_redirect_fallback_to_root", {})
+        }
+      } catch (e) {
+        redirectTarget = '/' // Use root instead of /home
+        logInfo("auth_callback_redirect_fallback_to_root", {})
+      }
+    } else {
+      redirectTarget = '/' // Use root instead of /home
+      logInfo("auth_callback_redirect_fallback_to_root", {})
+    }
   }
 
   // Validate redirect target (prevent redirect loops and auth paths)
   if (redirectTarget.startsWith('/auth') || redirectTarget === '/') {
-    // If redirect target is invalid, try to use referer as fallback before defaulting to home
+    // If redirect target is invalid, try to use referer as fallback
     const referer = request.headers.get('referer')
     if (referer) {
       try {
@@ -105,16 +123,16 @@ export async function GET(request: Request) {
           redirectTarget = refererUrl.pathname + refererUrl.search + refererUrl.hash
           logInfo("auth_callback_redirect_sanitized_to_referer", { original: redirectTarget, sanitized: redirectTarget })
         } else {
-          redirectTarget = '/home'
-          logWarn("auth_callback_redirect_sanitized_to_home", { original: redirectTarget, sanitized: '/home' })
+          redirectTarget = '/' // Use root instead of /home
+          logWarn("auth_callback_redirect_sanitized_to_root", { original: redirectTarget, sanitized: '/' })
         }
       } catch (e) {
-        redirectTarget = '/home'
-        logWarn("auth_callback_redirect_sanitized_to_home", { original: redirectTarget, sanitized: '/home' })
+        redirectTarget = '/' // Use root instead of /home
+        logWarn("auth_callback_redirect_sanitized_to_root", { original: redirectTarget, sanitized: '/' })
       }
     } else {
-      redirectTarget = '/home'
-      logWarn("auth_callback_redirect_sanitized_to_home", { original: redirectTarget, sanitized: '/home' })
+      redirectTarget = '/' // Use root instead of /home
+      logWarn("auth_callback_redirect_sanitized_to_root", { original: redirectTarget, sanitized: '/' })
     }
   }
 

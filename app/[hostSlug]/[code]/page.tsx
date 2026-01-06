@@ -154,28 +154,44 @@ async function PublicInviteContent({
     redirect(`/${currentHostSlug}/${code}`)
   }
 
-  // Fetch participants (both "confirmed" and "waitlisted" status for public view)
+  // Fetch participants - EXACT same logic as session control (getSessionAnalytics)
+  // Get ALL participants first (no status filter), then filter client-side
   const { data: allParticipants, error: participantsError } = await supabase
     .from("participants")
-    .select("id, display_name, status")
+    .select("id, display_name, status, created_at")
     .eq("session_id", session.id)
-    .in("status", ["confirmed", "waitlisted"])
     .order("created_at", { ascending: true })
 
   if (participantsError) {
     console.error(`[PublicInvitePage] Error fetching participants:`, participantsError)
   }
 
-  // Separate confirmed and waitlisted participants
-  const confirmedParticipants = (allParticipants || []).filter(p => p.status === "confirmed")
-  const waitlistParticipants = (allParticipants || []).filter(p => p.status === "waitlisted")
+  // Separate confirmed and waitlisted participants - EXACT same logic as getSessionAnalytics
+  const confirmedParticipants =
+    (allParticipants || [])
+      .filter((p) => p.status === "confirmed")
+      .map((p) => ({
+        id: p.id,
+        display_name: p.display_name,
+        status: p.status as "confirmed",
+      })) || []
 
-  // Debug: Log participant separation
+  const waitlistParticipants =
+    (allParticipants || [])
+      .filter((p) => p.status === "waitlisted")
+      .map((p) => ({
+        id: p.id,
+        display_name: p.display_name,
+        status: p.status as "waitlisted",
+      })) || []
+
+  // Debug: Log participant separation - same format as session control
   console.log("[PublicInvitePage] Participants fetched", {
     total: allParticipants?.length || 0,
     confirmed: confirmedParticipants.length,
     waitlisted: waitlistParticipants.length,
-    allParticipants: allParticipants?.map(p => ({ id: p.id, name: p.display_name, status: p.status }))
+    allParticipants: allParticipants?.map(p => ({ id: p.id, name: p.display_name, status: p.status })),
+    waitlistParticipants: waitlistParticipants.map(p => ({ id: p.id, name: p.display_name, status: p.status }))
   })
 
   return (

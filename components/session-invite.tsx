@@ -604,7 +604,7 @@ export function SessionInvite({
     updateCover(pendingCoverUrl, false)
   }
 
-  // Handle cover image upload
+  // Handle cover image upload with compression
   const handleCoverImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
@@ -618,28 +618,81 @@ export function SessionInvite({
         return
       }
 
-      // Validate file size (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
+      // Validate file size (max 10MB before compression)
+      if (file.size > 10 * 1024 * 1024) {
         toast({
           title: "File too large",
-          description: "Please upload an image smaller than 5MB.",
+          description: "Please upload an image smaller than 10MB.",
           variant: "default",
         })
         return
       }
 
-      // Convert to data URL for preview (temporary - should upload to storage in production)
+      // Compress and convert to data URL
       const reader = new FileReader()
       reader.onloadend = () => {
-        const result = reader.result as string
-        if (result) {
-          setPendingCoverUrl(result)
+        const img = new Image()
+        img.onload = () => {
+          // Create canvas for compression
+          const canvas = document.createElement('canvas')
+          const MAX_WIDTH = 1920 // Max width for cover images
+          const MAX_HEIGHT = 1080 // Max height for cover images
+          
+          let width = img.width
+          let height = img.height
+          
+          // Calculate new dimensions while maintaining aspect ratio
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height = (height * MAX_WIDTH) / width
+              width = MAX_WIDTH
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width = (width * MAX_HEIGHT) / height
+              height = MAX_HEIGHT
+            }
+          }
+          
+          canvas.width = width
+          canvas.height = height
+          
+          // Draw and compress
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height)
+            
+            // Convert to data URL with compression (0.85 quality for good balance)
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85)
+            
+            // Check compressed size (base64 is ~33% larger than binary)
+            const base64Size = compressedDataUrl.length
+            const estimatedBinarySize = (base64Size * 3) / 4
+            const estimatedMB = estimatedBinarySize / (1024 * 1024)
+            
+            if (estimatedMB > 5) {
+              // If still too large, compress more aggressively
+              const moreCompressed = canvas.toDataURL('image/jpeg', 0.7)
+              setPendingCoverUrl(moreCompressed)
+            } else {
+              setPendingCoverUrl(compressedDataUrl)
+            }
+            
+            toast({
+              title: "Image selected",
+              description: "Click Confirm to apply the cover image.",
+              variant: "success",
+            })
+          }
+        }
+        img.onerror = () => {
           toast({
-            title: "Image selected",
-            description: "Click Confirm to apply the cover image.",
-            variant: "success",
+            title: "Upload failed",
+            description: "Failed to process the image file.",
+            variant: "default",
           })
         }
+        img.src = reader.result as string
       }
       reader.onerror = () => {
         toast({

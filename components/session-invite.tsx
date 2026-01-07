@@ -77,6 +77,8 @@ interface SessionInviteProps {
   initialCourt?: string | null
   initialHostName?: string | null
   initialDescription?: string | null
+  initialMapUrl?: string | null
+  initialPaymentQrImage?: string | null
   initialContainerOverlayEnabled?: boolean | null
   demoMode?: boolean
   demoParticipants?: DemoParticipant[]
@@ -112,6 +114,8 @@ export function SessionInvite({
   initialCourt = null,
   initialHostName = null,
   initialDescription = null,
+  initialMapUrl = null,
+  initialPaymentQrImage = null,
   initialContainerOverlayEnabled = true,
   demoMode = false,
   demoParticipants = [],
@@ -709,7 +713,7 @@ export function SessionInvite({
   const [accountNumber, setAccountNumber] = useState("")
   const [accountName, setAccountName] = useState("")
   const [paymentNotes, setPaymentNotes] = useState("")
-  const [paymentQrImage, setPaymentQrImage] = useState<string | null>(null)
+  const [paymentQrImage, setPaymentQrImage] = useState<string | null>(initialPaymentQrImage || null)
   const [proofImage, setProofImage] = useState<string | null>(null) // For payment proof in preview mode
   const [proofImageFile, setProofImageFile] = useState<File | null>(null) // Store actual File object for upload
   const [isSubmittingProof, setIsSubmittingProof] = useState(false)
@@ -1111,19 +1115,20 @@ export function SessionInvite({
       const url = new URL(value.trim())
       const hostname = url.hostname.toLowerCase()
       
-      // Check if hostname is a Google Maps domain
-      const isGoogleMapsDomain = 
-        hostname.includes("google.com") ||
-        hostname.includes("maps.app.goo.gl") ||
-        hostname.includes("goo.gl") ||
-        hostname === "maps.google.com"
-      
-      if (!isGoogleMapsDomain) {
+      // Explicitly reject share.google links (these are share links, not maps links)
+      if (hostname.includes("share.google")) {
         return false
       }
       
-      // Check if pathname indicates maps (for google.com domains)
-      if (hostname.includes("google.com") && !url.pathname.includes("/maps")) {
+      // Check if hostname is a Google Maps domain
+      const isGoogleMapsDomain = 
+        (hostname.includes("google.com") && url.pathname.includes("/maps")) ||
+        hostname.includes("maps.app.goo.gl") ||
+        (hostname.includes("goo.gl") && url.pathname.includes("/maps")) ||
+        hostname === "maps.google.com" ||
+        hostname === "www.google.com" // Allow www.google.com if path includes /maps
+      
+      if (!isGoogleMapsDomain) {
         return false
       }
       
@@ -1722,6 +1727,8 @@ export function SessionInvite({
         coverUrl: optimisticCoverUrl || null,
         courtNumbers: eventCourt || null,
         containerOverlayEnabled: containerOverlayEnabled,
+        mapUrl: eventMapUrl || null,
+        paymentQrImage: paymentQrImage || null,
       }
 
       let result: { ok: boolean; publicCode?: string; hostSlug?: string; sessionId?: string; error?: string }
@@ -3495,8 +3502,19 @@ export function SessionInvite({
               <Input
                 type="url"
                 value={mapUrlDraft}
-                onChange={(e) => setMapUrlDraft(e.target.value)}
-                placeholder="Paste Google Maps link (optional)"
+                onChange={(e) => {
+                  const value = e.target.value
+                  setMapUrlDraft(value)
+                  // Validate and show warning if it's a share.google link
+                  if (value && value.includes("share.google")) {
+                    toast({
+                      title: "Invalid link format",
+                      description: "Please use a Google Maps link (maps.google.com or maps.app.goo.gl), not a share.google link.",
+                      variant: "default",
+                    })
+                  }
+                }}
+                placeholder="https://maps.google.com/... or https://maps.app.goo.gl/..."
                 className={cn(
                   "h-12 rounded-xl focus-visible:ring-2 focus-visible:ring-lime-500/40",
                   uiMode === "dark"
@@ -3518,7 +3536,7 @@ export function SessionInvite({
                 "text-xs",
                 uiMode === "dark" ? "text-white/60" : "text-black/60"
               )}>
-                Tip: Paste a Google Maps link to enable the map preview.
+                Tip: Use a Google Maps link (maps.google.com or maps.app.goo.gl) to enable the map preview. Share.google links won't work.
               </p>
             </div>
           </div>

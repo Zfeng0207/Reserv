@@ -123,7 +123,7 @@ async function PublicInviteContent({
   // Select only fields needed for public invite page (explicit fields, not *)
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, title, host_name, host_slug, host_id, cover_url, status, public_code, start_at, end_at, location, sport, capacity, waitlist_enabled, description, payment_account_name, payment_account_number, payment_bank_name, created_at, updated_at")
+    .select("id, title, host_name, host_slug, host_id, cover_url, status, public_code, start_at, end_at, location, sport, capacity, waitlist_enabled, description, payment_account_name, payment_account_number, payment_bank_name, map_url, payment_qr_image, created_at, updated_at")
     .eq("public_code", code)
     .single()
 

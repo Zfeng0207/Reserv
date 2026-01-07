@@ -165,11 +165,21 @@ export function isValidGoogleMapsUrl(value: string | null | undefined): boolean 
     const hostname = url.hostname.toLowerCase()
     
     // Check if hostname is a Google Maps domain
+    // Note: share.google links are Google Share links, not Maps links
+    // Users should use proper Google Maps links like:
+    // - https://maps.google.com/...
+    // - https://www.google.com/maps/place/...
+    // - https://maps.app.goo.gl/...
     const isGoogleMapsDomain = 
       hostname.includes("google.com") ||
       hostname.includes("maps.app.goo.gl") ||
       hostname.includes("goo.gl") ||
       hostname === "maps.google.com"
+    
+    // Exclude share.google links (these are share links, not maps links)
+    if (hostname.includes("share.google")) {
+      return false
+    }
     
     if (!isGoogleMapsDomain) {
       return false

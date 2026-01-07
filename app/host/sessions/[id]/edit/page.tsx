@@ -76,6 +76,8 @@ async function HostSessionEditContent({
       initialContainerOverlayEnabled={(session as any).container_overlay_enabled ?? true} // Type assertion until types are regenerated
       initialHostName={session.host_name || null}
       initialDescription={session.description || null}
+      initialMapUrl={(session as any).map_url || null} // Load map URL from database
+      initialPaymentQrImage={(session as any).payment_qr_image || null} // Load QR image from database
       initialIsPublished={isPublished} // Pass published status
       initialSessionStatus={session.status} // Pass session status for draft update logic
       publicCode={(session as any).public_code || null} // Pass publicCode for sharing

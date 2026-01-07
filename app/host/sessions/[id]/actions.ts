@@ -555,6 +555,8 @@ export async function publishSession(
     coverUrl?: string | null
     courtNumbers?: string | null
     containerOverlayEnabled?: boolean | null
+    mapUrl?: string | null
+    paymentQrImage?: string | null
   }
 ): Promise<{ ok: true; publicCode: string; hostSlug: string; sessionId: string } | { ok: false; error: string }> {
   const supabase = await createClient()
@@ -615,6 +617,8 @@ export async function publishSession(
         cover_url: sessionData.coverUrl || null,
         court_numbers: sessionData.courtNumbers || null,
         container_overlay_enabled: sessionData.containerOverlayEnabled ?? true,
+        map_url: sessionData.mapUrl || null,
+        payment_qr_image: sessionData.paymentQrImage || null,
         status: "draft", // Will be set to "open" after publishing
       })
       .select("id, host_id, public_code, host_slug, status")
@@ -720,6 +724,8 @@ export async function publishSession(
       status: "open",
       court_numbers: sessionData.courtNumbers || null,
       container_overlay_enabled: sessionData.containerOverlayEnabled ?? true,
+      map_url: sessionData.mapUrl || null,
+      payment_qr_image: sessionData.paymentQrImage || null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", actualSessionId)
@@ -752,6 +758,8 @@ export async function updateLiveSession(
     coverUrl?: string | null
     courtNumbers?: string | null
     containerOverlayEnabled?: boolean | null
+    mapUrl?: string | null
+    paymentQrImage?: string | null
   }
 ): Promise<{ ok: true; publicCode: string; hostSlug: string } | { ok: false; error: string }> {
   const supabase = await createClient()
@@ -799,6 +807,8 @@ export async function updateLiveSession(
       cover_url: sessionData.coverUrl || null,
       court_numbers: sessionData.courtNumbers || null,
       container_overlay_enabled: sessionData.containerOverlayEnabled ?? true,
+      map_url: sessionData.mapUrl || null,
+      payment_qr_image: sessionData.paymentQrImage || null,
       updated_at: new Date().toISOString(),
       // NOTE: status remains 'open' (not changed)
     })
@@ -955,16 +965,16 @@ export async function getSessionDataForDraft(
     titleFont: "inter", // Default font (not stored in sessions)
     eventDate: session.start_at || "",
     eventLocation: session.location || "",
-    eventMapUrl: "", // Not stored in sessions
+    eventMapUrl: (session as any).map_url || "", // Load from database
     eventPrice: 0, // Not stored in sessions (would need to fetch from payment_proofs or add price column)
     eventCapacity: session.capacity || 0,
     hostName: session.host_name || null,
     eventDescription: session.description || "",
-    bankName: "", // Not stored in sessions (would need separate table)
-    accountNumber: "", // Not stored in sessions
-    accountName: "", // Not stored in sessions
+    bankName: session.payment_bank_name || "", // Load from database
+    accountNumber: session.payment_account_number || "", // Load from database
+    accountName: session.payment_account_name || "", // Load from database
     paymentNotes: "", // Not stored in sessions
-    paymentQrImage: null, // Not stored in sessions
+    paymentQrImage: (session as any).payment_qr_image || null, // Load from database
   }
 
   return { ok: true, data: draftData }

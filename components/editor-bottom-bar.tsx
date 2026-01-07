@@ -51,6 +51,8 @@ export function EditorBottomBar({
   const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false)
   const [isUnpublishing, setIsUnpublishing] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState(theme || "badminton")
+  const [isSavingDraft, setIsSavingDraft] = useState(false)
+  const [isPublishing, setIsPublishing] = useState(false)
   const { toast } = useToast()
 
   // Derive sessionId from URL params for robust Edit navigation
@@ -111,14 +113,38 @@ export function EditorBottomBar({
   }
 
 
-  const handleSaveDraftClick = () => {
-    if (onSaveDraft) {
-      onSaveDraft()
-    } else {
-    toast({
-      description: "Draft saved",
-        variant: "success",
-    })
+  const handleSaveDraftClick = async () => {
+    if (isSavingDraft) return // Prevent double-clicks
+    
+    setIsSavingDraft(true)
+    try {
+      if (onSaveDraft) {
+        await onSaveDraft()
+      } else {
+        toast({
+          description: "Draft saved",
+          variant: "success",
+        })
+      }
+    } finally {
+      // Keep the visual feedback for a moment before resetting
+      setTimeout(() => {
+        setIsSavingDraft(false)
+      }, 500)
+    }
+  }
+
+  const handlePublishClick = async () => {
+    if (isPublishing || !onPublish) return // Prevent double-clicks
+    
+    setIsPublishing(true)
+    try {
+      await onPublish()
+    } finally {
+      // Keep the visual feedback for a moment before resetting
+      setTimeout(() => {
+        setIsPublishing(false)
+      }, 500)
     }
   }
 
@@ -306,26 +332,74 @@ export function EditorBottomBar({
               ) : (
                 <>
                   {onSaveDraft && (
-                    <Button
-                      onClick={handleSaveDraftClick}
-                      variant="outline"
-                      className={cn(
-                        "flex-1 font-medium rounded-full h-12",
-                        uiMode === "dark"
-                          ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
-                          : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
-                      )}
+                    <motion.div
+                      className="flex-1"
+                      whileTap={{ scale: 0.97 }}
+                      transition={{ duration: 0.1 }}
                     >
-                      {saveDraftLabel}
-                    </Button>
+                      <Button
+                        onClick={handleSaveDraftClick}
+                        disabled={isSavingDraft}
+                        variant="outline"
+                        className={cn(
+                          "w-full font-medium rounded-full h-12 relative overflow-hidden",
+                          uiMode === "dark"
+                            ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
+                            : "border-black/20 bg-black/5 hover:bg-black/10 text-black",
+                          isSavingDraft && "opacity-90"
+                        )}
+                      >
+                        {isSavingDraft && (
+                          <motion.div
+                            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
+                            animate={{
+                              x: ["-100%", "100%"],
+                            }}
+                            transition={{
+                              duration: 1.5,
+                              repeat: Infinity,
+                              ease: "linear",
+                            }}
+                          />
+                        )}
+                        <span className="relative z-10">
+                          {isSavingDraft ? "Saving..." : saveDraftLabel}
+                        </span>
+                      </Button>
+                    </motion.div>
                   )}
                   {onPublish && (
-                    <Button
-                      onClick={onPublish}
-                      className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
+                    <motion.div
+                      className="flex-1"
+                      whileTap={{ scale: 0.97 }}
+                      transition={{ duration: 0.1 }}
                     >
-                      {isLive ? "Update" : "Publish"}
-                    </Button>
+                      <Button
+                        onClick={handlePublishClick}
+                        disabled={isPublishing}
+                        className={cn(
+                          "w-full bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20 relative overflow-hidden",
+                          isPublishing && "opacity-90"
+                        )}
+                      >
+                        {isPublishing && (
+                          <motion.div
+                            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
+                            animate={{
+                              x: ["-100%", "100%"],
+                            }}
+                            transition={{
+                              duration: 1.5,
+                              repeat: Infinity,
+                              ease: "linear",
+                            }}
+                          />
+                        )}
+                        <span className="relative z-10">
+                          {isPublishing ? (isLive ? "Updating..." : "Publishing...") : (isLive ? "Update" : "Publish")}
+                        </span>
+                      </Button>
+                    </motion.div>
                   )}
                   {!onPublish && !onSaveDraft && (
             <Button

@@ -43,6 +43,8 @@ interface Session {
   container_overlay_enabled?: boolean | null
   public_code: string // Required for joining
   status?: "draft" | "open" | "closed" | "completed" | "cancelled" // Session status
+  map_url?: string | null // Google Maps URL
+  payment_qr_image?: string | null // Payment QR code image
   // Add price if it exists in the schema
   // price?: number | null
 }
@@ -1117,6 +1119,8 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         initialContainerOverlayEnabled={session.container_overlay_enabled ?? true}
         initialHostName={session.host_name || null}
         initialDescription={session.description || null}
+        initialMapUrl={session.map_url || null}
+        initialPaymentQrImage={session.payment_qr_image || null}
         demoMode={false}
         demoParticipants={demoParticipants}
         onJoinClick={handleRSVPClick}

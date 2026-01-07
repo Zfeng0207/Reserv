@@ -15,6 +15,8 @@ interface HostSessionEditClientProps {
   initialCapacity: number | null
   initialHostName: string | null
   initialDescription: string | null
+  initialMapUrl?: string | null
+  initialPaymentQrImage?: string | null
   initialIsPublished: boolean
   initialSessionStatus?: "draft" | "open" | "closed" | "completed" | "cancelled" // Session status for draft update logic
   publicCode?: string | null // Public code for sharing
@@ -34,6 +36,8 @@ export function HostSessionEditClient({
   initialCapacity,
   initialHostName,
   initialDescription,
+  initialMapUrl,
+  initialPaymentQrImage,
   initialIsPublished,
   initialSessionStatus,
   publicCode,
@@ -53,6 +57,8 @@ export function HostSessionEditClient({
       initialCapacity={initialCapacity}
       initialHostName={initialHostName}
       initialDescription={initialDescription}
+      initialMapUrl={initialMapUrl ?? null}
+      initialPaymentQrImage={initialPaymentQrImage ?? null}
       initialIsPublished={initialIsPublished}
       initialSessionStatus={initialSessionStatus}
       publicCode={publicCode}

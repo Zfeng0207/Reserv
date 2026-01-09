@@ -1267,16 +1267,14 @@ export async function submitPaymentProof(
       validated: true,
     }, traceId))
 
-    // Insert payment_proofs record using admin client
-    // We use admin client here because:
-    // 1. We've already validated all participants exist and belong to the session on the server
-    // 2. The RLS policy check on participants table might fail due to status restrictions
-    // 3. This is a server-side operation with proper validation, so bypassing RLS is safe
+    // Insert payment_proofs record using anonymous client
+    // RLS policy "anyone_can_insert_payment_proofs" allows anyone (anon or authenticated) to insert
     // Format covered_participant_ids as JSONB array
     // Format: [{"participant_id": "uuid1"}, {"participant_id": "uuid2"}]
     const coveredParticipantsJson = coveredParticipantIds.map(id => ({ participant_id: id }))
 
-    const { data: proofData, error: insertError } = await adminClient
+    const anonClient = await createAnonymousClient()
+    const { data: proofData, error: insertError } = await anonClient
       .from("payment_proofs")
       .insert({
         session_id: sessionId,

@@ -6,9 +6,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
-import { MapPin, Users, Calendar, Check, Sparkles, AlertCircle } from "lucide-react"
+import { MapPin, Users, Calendar, Check, Ban, Radio, Sparkles, AlertCircle } from "lucide-react"
+import { motion } from "framer-motion"
 import { useToast } from "@/hooks/use-toast"
 
 interface LiveSession {
@@ -152,13 +152,13 @@ export function LiveInviteGuardModal({
   isLoading = false,
   error = null,
   onRetry,
-  isLimitReached = false,
 }: LiveInviteGuardModalProps) {
   const router = useRouter()
   const { toast } = useToast()
   const [localSessions, setLocalSessions] = useState(liveSessions)
   const [dontShowAgain, setDontShowAgain] = useState(false)
-  const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([])
+  const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false)
+  const [sessionToUnpublish, setSessionToUnpublish] = useState<LiveSession | null>(null)
   const [isUnpublishing, setIsUnpublishing] = useState(false)
 
   // Sync localSessions when liveSessions prop changes
@@ -174,6 +174,13 @@ export function LiveInviteGuardModal({
     ? "bg-black/30 border-white/20 text-white backdrop-blur-sm"
     : "bg-white/70 border-black/10 text-black backdrop-blur-sm"
 
+  const handleGoToLiveInvite = (session: LiveSession) => {
+    if (session.id) {
+      onOpenChange(false)
+      // Navigate to preview page instead of analytics
+      router.push(`/host/sessions/${session.id}/edit?mode=preview`)
+    }
+  }
 
   const handleContinue = () => {
     // Save "don't show again" preference if checked
@@ -199,39 +206,32 @@ export function LiveInviteGuardModal({
     }
   }
 
-  const handleToggleSelection = (sessionId: string) => {
-    setSelectedSessionIds((prev) =>
-      prev.includes(sessionId)
-        ? prev.filter((id) => id !== sessionId)
-        : [...prev, sessionId]
-    )
+  const handleUnpublishClick = (e: React.MouseEvent, session: LiveSession) => {
+    e.stopPropagation() // Prevent card click
+    setSessionToUnpublish(session)
+    setUnpublishDialogOpen(true)
   }
 
-  const handleUnpublishSelected = async () => {
-    if (selectedSessionIds.length === 0) return
+  const handleUnpublishConfirm = async () => {
+    if (!sessionToUnpublish) return
 
     setIsUnpublishing(true)
     try {
       const { unpublishSession } = await import("@/app/host/sessions/[id]/actions")
-      
-      // Unpublish all selected sessions
-      const results = await Promise.all(
-        selectedSessionIds.map((sessionId) => unpublishSession(sessionId))
-      )
+      const result = await unpublishSession(sessionToUnpublish.id)
 
-      // Check for any failures
-      const failed = results.filter((r) => !r.ok)
-      if (failed.length > 0) {
+      if (!result.ok) {
         toast({
-          title: "Some removals failed",
-          description: failed.map((r) => r.error).join(", "),
+          title: "Removal failed",
+          description: result.error || "Failed to remove invite. Try again.",
           variant: "destructive",
         })
+        setIsUnpublishing(false)
+        return
       }
 
-      // Optimistic UI update (remove successfully unpublished sessions from local list)
-      const successfulIds = results.filter((r) => r.ok).map((_, i) => selectedSessionIds[i])
-      const updatedSessions = localSessions.filter((s) => !successfulIds.includes(s.id))
+      // Optimistic UI update (remove session from local list)
+      const updatedSessions = localSessions.filter((s) => s.id !== sessionToUnpublish.id)
       setLocalSessions(updatedSessions)
       
       // Notify parent to update its state
@@ -239,16 +239,15 @@ export function LiveInviteGuardModal({
         onSessionsUpdate(updatedSessions)
       }
 
-      // Clear selection
-      setSelectedSessionIds([])
+      // Close dialog
+      setUnpublishDialogOpen(false)
+      setSessionToUnpublish(null)
 
-      if (successfulIds.length > 0) {
-        toast({
-          title: "Invite(s) removed",
-          description: `${successfulIds.length} invite(s) and all participant data have been permanently deleted.`,
-          variant: "default",
-        })
-      }
+      toast({
+        title: "Invite removed",
+        description: "Invite and all participant data have been permanently deleted.",
+        variant: "default",
+      })
 
       // Trigger parent to refetch from server
       if (onUnpublishSuccess) {
@@ -258,12 +257,13 @@ export function LiveInviteGuardModal({
       // Authoritative refresh: refetch server data
       router.refresh()
 
-      // If all sessions are removed, the empty state will show automatically
+      // Don't close modal when empty - show empty state instead
+      // The empty state will be shown automatically since localSessions is now empty
     } catch (error: any) {
-      console.error("[handleUnpublishSelected] Error:", error)
+      console.error("[handleUnpublishConfirm] Error:", { sessionId: sessionToUnpublish?.id, error })
       toast({
         title: "Removal failed",
-        description: error.message || "Failed to remove invite(s). Try again.",
+        description: error.message || "Failed to remove invite. Try again.",
         variant: "destructive",
       })
     } finally {
@@ -282,30 +282,16 @@ export function LiveInviteGuardModal({
         )}
       >
         <DialogHeader>
-          {isLimitReached ? (
-            <>
-              <DialogTitle className={cn("text-xl font-semibold flex items-center gap-2", uiMode === "dark" ? "text-red-400" : "text-red-600")}>
-                <AlertCircle className="w-5 h-5" />
-                Limit reached
-              </DialogTitle>
-              <DialogDescription className={cn(uiMode === "dark" ? "text-red-400/80" : "text-red-600/80")}>
-                You have reached the maximum number of live invites. Please unpublish one to continue.
-              </DialogDescription>
-            </>
-          ) : (
-            <>
-              <DialogTitle className={cn("text-xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
-                {isEmpty
-                  ? "No live invites are currently public"
-                  : "You've got a live invite going 🔥"}
-              </DialogTitle>
-              <DialogDescription className={cn(uiMode === "dark" ? "text-white/60" : "text-black/60")}>
-                {isEmpty
-                  ? "Create one now, publish it, then share your link."
-                  : "Want to jump back in, or spin up another one?"}
-              </DialogDescription>
-            </>
-          )}
+          <DialogTitle className={cn("text-xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
+            {isEmpty
+              ? "No live invites are currently public"
+              : "You've got a live invite going 🔥"}
+          </DialogTitle>
+          <DialogDescription className={cn(uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+            {isEmpty
+              ? "Create one now, publish it, then share your link."
+              : "Want to jump back in, or spin up another one?"}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto mt-4 space-y-3 min-h-0">
@@ -380,34 +366,33 @@ export function LiveInviteGuardModal({
           ) : (
             localSessions.map((session) => {
               const sportLabel = SPORT_LABELS[session.sport] || session.sport
-              const isSelected = selectedSessionIds.includes(session.id)
 
               return (
               <div key={session.id} className="relative">
-                <Card 
-                  className={cn(
-                    "p-4 border transition-all hover:shadow-lg relative cursor-pointer",
-                    glassCard,
-                    isSelected && (uiMode === "dark" ? "border-red-500/50 bg-red-500/10" : "border-red-500/50 bg-red-50/50")
-                  )}
-                  onClick={() => handleToggleSelection(session.id)}
-                >
-                  {/* Checkbox - positioned absolutely */}
-                  <div className="absolute top-4 right-4 z-10">
-                    <Checkbox
-                      checked={isSelected}
-                      onCheckedChange={() => handleToggleSelection(session.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      className={cn(
-                        "h-5 w-5 border-2",
-                        uiMode === "dark" 
-                          ? "border-white/30 data-[state=checked]:border-red-500 data-[state=checked]:bg-red-500"
-                          : "border-black/30 data-[state=checked]:border-red-500 data-[state=checked]:bg-red-500"
-                      )}
-                    />
-                  </div>
+                <Card className={cn("p-4 border transition-all hover:shadow-lg relative", glassCard)}>
+                  {/* Unpublish button - positioned absolutely */}
+                  <Button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleUnpublishClick(e, session)
+                    }}
+                    size="sm"
+                    variant="ghost"
+                    className={cn(
+                      "absolute top-6 right-7 z-10 rounded-full h-7 px-2.5 text-xs",
+                      "bg-red-500/50 text-white border border-red-500/80 hover:bg-red-500/70 hover:text-white shadow-none"
+                    )}
+                  >
+                    <Ban className="w-3 h-3 mr-1.5" />
+                    Unpublish
+                  </Button>
 
-                  <div className="w-full text-left">
+                  <motion.button
+                    onClick={() => handleGoToLiveInvite(session)}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="w-full text-left"
+                  >
                     {/* Cover Image / Sport Background */}
                     <div
                       className={cn(
@@ -470,8 +455,14 @@ export function LiveInviteGuardModal({
                         </div>
                       )}
 
+                      {/* Go to live invite indicator */}
+                      <div className="mt-3 text-center">
+                        <span className={cn("text-xs font-medium", uiMode === "dark" ? "text-lime-400" : "text-lime-600")}>
+                          Tap to view →
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  </motion.button>
                 </Card>
               </div>
               )
@@ -482,28 +473,8 @@ export function LiveInviteGuardModal({
         {/* Bottom Actions - only show when there are sessions (not empty, loading, or error) */}
         {!isLoading && !error && !isEmpty && (
           <div className={cn("mt-4 pt-4 space-y-3", uiMode === "dark" ? "border-t border-white/10" : "border-t border-black/10")}>
-            {/* Unpublish button */}
-            <Button
-              onClick={handleUnpublishSelected}
-              disabled={selectedSessionIds.length === 0 || isUnpublishing}
-              className={cn(
-                "w-full rounded-full h-12 font-medium shadow-lg",
-                selectedSessionIds.length === 0 || isUnpublishing
-                  ? "opacity-50 cursor-not-allowed bg-red-500/50 text-white border border-red-500/50"
-                  : "bg-red-600 hover:bg-red-700 text-white border border-red-700"
-              )}
-            >
-              {isUnpublishing ? (
-                "Unpublishing..."
-              ) : selectedSessionIds.length > 0 ? (
-                `Unpublish ${selectedSessionIds.length} ${selectedSessionIds.length === 1 ? "invite" : "invites"}`
-              ) : (
-                "Select invite(s) to unpublish"
-              )}
-            </Button>
-
-            {/* Don't show again checkbox - only show when not at limit */}
-            {userId && !isLimitReached && (
+            {/* Don't show again checkbox */}
+            {userId && (
               <button
                 onClick={() => setDontShowAgain(!dontShowAgain)}
                 className={cn(
@@ -531,32 +502,76 @@ export function LiveInviteGuardModal({
               </button>
             )}
 
-            {/* Create Another button - only show when not at limit */}
-            {!isLimitReached && (
-              liveCount >= 2 ? (
-                <div className="text-center">
-                  <Button
-                    disabled
-                    className="w-full rounded-full h-12 opacity-50 cursor-not-allowed bg-gradient-to-r from-lime-500 to-emerald-500 text-black"
-                  >
-                    Create Another
-                  </Button>
-                  <p className={cn("text-xs mt-2", uiMode === "dark" ? "text-white/50" : "text-black/50")}>
-                    You can only have 2 live invites at a time. Close one to publish another.
-                  </p>
-                </div>
-              ) : (
+            {/* Create Another button - Primary CTA (green) */}
+            {liveCount >= 2 ? (
+              <div className="text-center">
                 <Button
-                  onClick={handleContinue}
-                  className="w-full bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
+                  disabled
+                  className="w-full rounded-full h-12 opacity-50 cursor-not-allowed bg-gradient-to-r from-lime-500 to-emerald-500 text-black"
                 >
                   Create Another
                 </Button>
-              )
+                <p className={cn("text-xs mt-2", uiMode === "dark" ? "text-white/50" : "text-black/50")}>
+                  You can only have 2 live invites at a time. Close one to publish another.
+                </p>
+              </div>
+            ) : (
+              <Button
+                onClick={handleContinue}
+                className="w-full bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg shadow-lime-500/20"
+              >
+                Create Another
+              </Button>
             )}
           </div>
         )}
       </DialogContent>
+
+      {/* Unpublish Confirmation Dialog */}
+      <Dialog open={unpublishDialogOpen} onOpenChange={setUnpublishDialogOpen}>
+        <DialogContent
+          className={cn(
+            "max-w-md rounded-2xl",
+            uiMode === "dark"
+              ? "bg-slate-900 text-white border border-white/10"
+              : "bg-white text-black border border-black/10"
+          )}
+        >
+          <DialogHeader>
+            <DialogTitle className={cn("text-xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
+              Remove this invite?
+            </DialogTitle>
+            <DialogDescription className={cn(uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+              This will permanently delete the invite and all participant data. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-3 mt-4">
+            <Button
+              onClick={() => {
+                setUnpublishDialogOpen(false)
+                setSessionToUnpublish(null)
+              }}
+              variant="outline"
+              disabled={isUnpublishing}
+              className={cn(
+                "flex-1 rounded-full h-12",
+                uiMode === "dark"
+                  ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
+                  : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
+              )}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleUnpublishConfirm}
+              disabled={isUnpublishing}
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium rounded-full h-12 shadow-lg shadow-red-500/20"
+            >
+              {isUnpublishing ? "Removing..." : "Remove"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   )
 }

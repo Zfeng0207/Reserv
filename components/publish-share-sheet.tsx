@@ -49,7 +49,7 @@ export function PublishShareSheet({
   const handleCopyLink = async () => {
     try {
       // Copy the share text with URL for better UX
-      const textToCopy = `${shareText}\n${publishedUrl}`
+      const textToCopy = `${publishedUrl}`
       await navigator.clipboard.writeText(textToCopy)
       setCopied(true)
       toast({

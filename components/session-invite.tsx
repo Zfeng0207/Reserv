@@ -4243,6 +4243,7 @@ export function SessionInvite({
         onOpenChange={setDraftNameOpen}
         onSave={confirmSaveDraft}
         uiMode={uiMode}
+        initialName={eventTitle || ""}
       />
 
       {/* Drafts Dialog */}

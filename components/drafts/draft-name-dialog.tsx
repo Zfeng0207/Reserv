@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { ActionButton } from "@/components/ui/action-button"
@@ -13,10 +13,11 @@ interface DraftNameDialogProps {
   onOpenChange: (open: boolean) => void
   onSave: (name: string) => Promise<void> | void
   uiMode: "dark" | "light"
+  initialName?: string // Optional initial name to pre-fill
 }
 
-export function DraftNameDialog({ open, onOpenChange, onSave, uiMode }: DraftNameDialogProps) {
-  const [name, setName] = useState("")
+export function DraftNameDialog({ open, onOpenChange, onSave, uiMode, initialName = "" }: DraftNameDialogProps) {
+  const [name, setName] = useState(initialName)
   const [isSaving, setIsSaving] = useState(false)
 
   const handleSave = async () => {
@@ -38,9 +39,19 @@ export function DraftNameDialog({ open, onOpenChange, onSave, uiMode }: DraftNam
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) {
       setName("")
+    } else {
+      // When opening, set initial name if provided
+      setName(initialName || "")
     }
     onOpenChange(isOpen)
   }
+
+  // Update name when initialName changes (e.g., when dialog opens with new title)
+  useEffect(() => {
+    if (open && initialName) {
+      setName(initialName)
+    }
+  }, [open, initialName])
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>

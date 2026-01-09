@@ -1142,13 +1142,15 @@ export async function getPaymentUploadsForSession(
 
   const participantIds = participants.map((p) => p.id)
 
-  // Fetch all payment proofs for these participants (get latest per participant)
+  // Fetch all payment proofs for this session with covered_participant_ids
+  // NEW MODEL: Check covered_participant_ids to see which participants are covered
   const { data: paymentProofs, error: paymentError } = await supabase
     .from("payment_proofs")
     .select(
       `
       id,
       participant_id,
+      covered_participant_ids,
       payment_status,
       created_at,
       amount,
@@ -1157,7 +1159,6 @@ export async function getPaymentUploadsForSession(
     `
     )
     .eq("session_id", sessionId)
-    .in("participant_id", participantIds)
     .order("created_at", { ascending: false })
 
   if (paymentError) {
@@ -1165,12 +1166,31 @@ export async function getPaymentUploadsForSession(
     return { ok: false, error: paymentError.message }
   }
 
-  // Group proofs by participant_id and get the latest one for each
+  // Build map of participant_id -> latest payment proof
+  // NEW MODEL: Check covered_participant_ids array, not just participant_id
   const latestProofByParticipant: Record<string, typeof paymentProofs[0]> = {}
+  
   paymentProofs?.forEach((proof: any) => {
+    // Check covered_participant_ids (new model)
+    if (proof.covered_participant_ids && Array.isArray(proof.covered_participant_ids)) {
+      proof.covered_participant_ids.forEach((item: any) => {
+        const coveredPid = item?.participant_id
+        if (coveredPid && participantIds.includes(coveredPid)) {
+          // Only update if we don't have a proof for this participant yet, or this one is newer
+          if (!latestProofByParticipant[coveredPid] || 
+              new Date(proof.created_at) > new Date(latestProofByParticipant[coveredPid].created_at)) {
+            latestProofByParticipant[coveredPid] = proof
+          }
+        }
+      })
+    }
+    // Backward compatibility: also check participant_id (old model)
     const pid = proof.participant_id
-    if (!latestProofByParticipant[pid]) {
-      latestProofByParticipant[pid] = proof
+    if (pid && participantIds.includes(pid)) {
+      if (!latestProofByParticipant[pid] || 
+          new Date(proof.created_at) > new Date(latestProofByParticipant[pid].created_at)) {
+        latestProofByParticipant[pid] = proof
+      }
     }
   })
 
@@ -1321,27 +1341,40 @@ export async function markParticipantPaidByCash(
   }
 
   // Check if participant already has an approved payment proof
-  const { data: existingProof } = await supabase
+  // NEW MODEL: Check covered_participant_ids, not just participant_id
+  const { data: allProofs } = await supabase
     .from("payment_proofs")
-    .select("id, payment_status")
+    .select("id, payment_status, covered_participant_ids, participant_id")
     .eq("session_id", sessionId)
-    .eq("participant_id", participantId)
     .eq("payment_status", "approved")
-    .maybeSingle()
 
-  if (existingProof) {
+  // Check if participant is already covered by any approved payment
+  const isAlreadyPaid = allProofs?.some((proof: any) => {
+    // Check covered_participant_ids (new model)
+    if (proof.covered_participant_ids && Array.isArray(proof.covered_participant_ids)) {
+      return proof.covered_participant_ids.some((item: any) => item?.participant_id === participantId)
+    }
+    // Backward compatibility: check participant_id (old model)
+    return proof.participant_id === participantId
+  })
+
+  if (isAlreadyPaid) {
     return { ok: false, error: "Participant is already marked as paid" }
   }
 
   // Use admin client to insert payment proof (bypasses RLS)
   const adminClient = createAdminClient()
   
+  // Format covered_participant_ids as JSONB array
+  const coveredParticipantsJson = [{ participant_id: participantId }]
+  
   // Create a payment_proof record with payment_status='approved' and no proof_image_url (cash payment)
   const { data: newProof, error: insertError } = await adminClient
     .from("payment_proofs")
     .insert({
       session_id: sessionId,
-      participant_id: participantId,
+      participant_id: participantId, // Keep for backward compatibility (who marked as paid)
+      covered_participant_ids: coveredParticipantsJson, // NEW: Who is covered by this payment
       payment_status: "approved",
       proof_image_url: null, // No image for cash payments
       ocr_status: "pending",
@@ -1363,12 +1396,13 @@ export async function markParticipantPaidByCash(
 
 /**
  * Add a participant manually (host-only)
- * Creates a participant with status="confirmed" for the session
+ * Creates a participant with the specified status for the session
  */
 export async function addParticipant(
   sessionId: string,
   name: string,
-  phone: string | null
+  phone: string | null,
+  status: "confirmed" | "waitlisted" = "confirmed"
 ): Promise<{ ok: true; participantId: string } | { ok: false; error: string }> {
   const supabase = await createClient()
   const userId = await getUserId(supabase)
@@ -1401,14 +1435,14 @@ export async function addParticipant(
   // Use admin client to bypass RLS (host action)
   const adminClient = createAdminClient()
 
-  // Insert participant with status="confirmed"
+  // Insert participant with specified status
   const { data: newParticipant, error: insertError } = await adminClient
     .from("participants")
     .insert({
       session_id: sessionId,
       display_name: trimmedName,
       contact_phone: phone?.trim() || null,
-      status: "confirmed",
+      status: status,
       // guest_key is null for manually added participants
     })
     .select("id")

@@ -43,7 +43,7 @@ export function GuestRSVPDialog({
   // Update name when initialName changes (e.g., when dialog opens with pre-filled name)
   useEffect(() => {
     if (open) {
-      // Prefer initialName prop, then localStorage
+      // Prefer initialName prop (from authenticated user's email/Gmail), then localStorage
       const storedName = typeof window !== "undefined" ? localStorage.getItem("guestName") : null
       const nameToUse = initialName || storedName || ""
       if (nameToUse) {

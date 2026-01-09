@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { logInfo, logError, logWarn, newTraceId, withTrace } from "@/lib/logger"
@@ -74,6 +75,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
   const [participantToRemove, setParticipantToRemove] = useState<{ id: string; name: string } | null>(null)
   const [newParticipantName, setNewParticipantName] = useState("")
   const [newParticipantPhone, setNewParticipantPhone] = useState("")
+  const [newParticipantStatus, setNewParticipantStatus] = useState<"confirmed" | "waitlisted">("confirmed")
   const [isAdding, setIsAdding] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
 
@@ -191,7 +193,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
 
     try {
       const { addParticipant } = await import("@/app/host/sessions/[id]/actions")
-      const result = await addParticipant(sessionId, trimmedName, newParticipantPhone.trim() || null)
+      const result = await addParticipant(sessionId, trimmedName, newParticipantPhone.trim() || null, newParticipantStatus)
       
       if (!result.ok) {
         logError("attendee_add_failed", withTrace({
@@ -213,21 +215,36 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
 
       // Optimistic update
       if (analytics) {
-        setAnalytics({
-          ...analytics,
-          attendance: {
-            ...analytics.attendance,
-            accepted: analytics.attendance.accepted + 1,
-          },
-          acceptedList: [
-            ...analytics.acceptedList,
-            {
-              id: result.participantId,
-              display_name: trimmedName,
-              created_at: new Date().toISOString(),
+        if (newParticipantStatus === "confirmed") {
+          setAnalytics({
+            ...analytics,
+            attendance: {
+              ...analytics.attendance,
+              accepted: analytics.attendance.accepted + 1,
             },
-          ],
-        })
+            acceptedList: [
+              ...analytics.acceptedList,
+              {
+                id: result.participantId,
+                display_name: trimmedName,
+                created_at: new Date().toISOString(),
+              },
+            ],
+          })
+        } else {
+          // Waitlisted
+          setAnalytics({
+            ...analytics,
+            waitlistedList: [
+              ...analytics.waitlistedList,
+              {
+                id: result.participantId,
+                display_name: trimmedName,
+                created_at: new Date().toISOString(),
+              },
+            ],
+          })
+        }
       }
 
       toast({
@@ -238,6 +255,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
       // Reset form and close dialog
       setNewParticipantName("")
       setNewParticipantPhone("")
+      setNewParticipantStatus("confirmed")
       setAddDialogOpen(false)
 
       // Refetch to ensure consistency
@@ -929,6 +947,37 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
                 disabled={isAdding}
               />
             </div>
+            <div className="space-y-2">
+              <Label className={cn(uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+                Status
+              </Label>
+              <Select
+                value={newParticipantStatus}
+                onValueChange={(value: "confirmed" | "waitlisted") => setNewParticipantStatus(value)}
+                disabled={isAdding}
+              >
+                <SelectTrigger
+                  className={cn(
+                    "w-full",
+                    uiMode === "dark"
+                      ? "bg-white/5 border-white/20 text-white"
+                      : "bg-black/5 border-black/20 text-black"
+                  )}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent
+                  className={cn(
+                    uiMode === "dark"
+                      ? "bg-slate-900 border-white/20 text-white"
+                      : "bg-white border-black/20 text-black"
+                  )}
+                >
+                  <SelectItem value="confirmed">Confirmed</SelectItem>
+                  <SelectItem value="waitlisted">Waitlist</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter className="gap-3 mt-6">
             <Button
@@ -936,6 +985,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
                 setAddDialogOpen(false)
                 setNewParticipantName("")
                 setNewParticipantPhone("")
+                setNewParticipantStatus("confirmed")
               }}
               variant="outline"
               disabled={isAdding}
@@ -951,7 +1001,7 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
             <Button
               onClick={handleAddParticipant}
               disabled={isAdding || !newParticipantName.trim()}
-              className="flex-1 bg-[var(--theme-accent)] hover:bg-[var(--theme-accent)]/90 text-white font-medium rounded-full h-12 shadow-lg"
+              className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-12 shadow-lg"
             >
               {isAdding ? "Adding..." : "Add attendee"}
             </Button>

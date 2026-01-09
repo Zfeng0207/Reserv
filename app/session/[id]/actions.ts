@@ -45,7 +45,8 @@ export async function getParticipantRSVPStatus(
   let error = null
 
   if (userId && userEmail) {
-    // Authenticated user: check by email first (more reliable), then fallback to guest_key
+    // Authenticated user: ONLY query by email (identity scope invariant)
+    // Do NOT fallback to guest_key - this prevents attaching wrong participants
     const { data: emailMatch, error: emailError } = await supabase
       .from("participants")
       .select("id, status, display_name, guest_key, contact_email")
@@ -55,25 +56,13 @@ export async function getParticipantRSVPStatus(
 
     if (emailMatch) {
       participant = emailMatch
-    } else if (guestKey) {
-      // Fallback to guest_key if no email match
-      const { data: guestMatch, error: guestError } = await supabase
-        .from("participants")
-        .select("id, status, display_name, guest_key")
-        .eq("session_id", session.id)
-        .eq("guest_key", guestKey)
-        .maybeSingle()
-
-      if (guestMatch) {
-        participant = guestMatch
-      } else {
-        error = guestError
-      }
     } else {
+      // No email match = user hasn't joined yet (or joined as guest, which is separate)
       error = emailError
     }
   } else if (profileId) {
-    // Guest user: check by profile_id (guestKey UUID) first - primary lookup
+    // Guest user: ONLY query by profile_id (identity scope invariant)
+    // Do NOT fallback to guest_key - this prevents attaching wrong participants
     const { data: profileMatch, error: profileError } = await supabase
       .from("participants")
       .select("id, status, display_name, guest_key, contact_email, profile_id")
@@ -87,38 +76,9 @@ export async function getParticipantRSVPStatus(
       if (!profileMatch.contact_email) {
         participant = profileMatch
       }
-    } else if (guestKey) {
-      // Fallback to guest_key (for backward compatibility with old participants)
-      const { data: guestMatch, error: guestError } = await supabase
-        .from("participants")
-        .select("id, status, display_name, guest_key, contact_email")
-        .eq("session_id", session.id)
-        .eq("guest_key", guestKey)
-        .maybeSingle()
-
-      // Only return participant if it was created as a guest (no contact_email)
-      if (guestMatch && !guestMatch.contact_email) {
-        participant = guestMatch
-      } else {
-        error = guestError
-      }
     } else {
+      // No profile_id match = guest hasn't joined yet
       error = profileError
-    }
-  } else if (guestKey) {
-    // Legacy: guest with guest_key but no profile_id/name (shouldn't happen with new code)
-    const { data: guestMatch, error: guestError } = await supabase
-      .from("participants")
-      .select("id, status, display_name, guest_key, contact_email")
-      .eq("session_id", session.id)
-      .eq("guest_key", guestKey)
-      .maybeSingle()
-
-    // Only return participant if it was created as a guest (no contact_email)
-    if (guestMatch && !guestMatch.contact_email) {
-      participant = guestMatch
-    } else {
-      error = guestError
     }
   } else {
     // No identifier provided (not authenticated, no guest_key, no name) = signed out
@@ -954,10 +914,10 @@ export async function getUnpaidParticipants(
     return { ok: true, participants: [] }
   }
 
-  // Get all approved payment proofs for this session
+  // Get all approved payment proofs for this session with covered_participant_ids
   const { data: paymentProofs, error: paymentError } = await supabase
     .from("payment_proofs")
-    .select("participant_id")
+    .select("participant_id, covered_participant_ids")
     .eq("session_id", session.id)
     .eq("payment_status", "approved")
 
@@ -966,8 +926,26 @@ export async function getUnpaidParticipants(
     return { ok: true, participants: participants }
   }
 
-  // Filter out participants who have approved payment
-  const paidParticipantIds = new Set(paymentProofs?.map(p => p.participant_id) || [])
+  // Build set of all paid participant IDs from covered_participant_ids
+  // NEW MODEL: Check covered_participant_ids array, not just participant_id
+  const paidParticipantIds = new Set<string>()
+  
+  paymentProofs?.forEach(proof => {
+    // Handle covered_participant_ids (new model)
+    if (proof.covered_participant_ids && Array.isArray(proof.covered_participant_ids)) {
+      proof.covered_participant_ids.forEach((item: any) => {
+        if (item?.participant_id) {
+          paidParticipantIds.add(item.participant_id)
+        }
+      })
+    }
+    // Backward compatibility: also check participant_id (old model)
+    if (proof.participant_id) {
+      paidParticipantIds.add(proof.participant_id)
+    }
+  })
+
+  // Filter out participants who have approved payment (covered by any payment proof)
   const unpaidParticipants = participants.filter(p => !paidParticipantIds.has(p.id))
 
   return { ok: true, participants: unpaidParticipants }
@@ -1101,12 +1079,14 @@ export async function pullOutFromSession({
 }
 
 /**
- * Submit payment proof for a session participant
+ * Submit payment proof for a session participant(s)
  * Uploads file to Supabase Storage and creates payment_proofs record
+ * A single payment proof can cover multiple participants
  */
 export async function submitPaymentProof(
   sessionId: string,
-  participantId: string, // Changed: now accepts participantId directly
+  paidByParticipantId: string, // Who uploaded the payment (for tracking)
+  coveredParticipantIds: string[], // Array of participant IDs covered by this payment
   fileData: string, // Base64 encoded image data
   fileName: string
 ): Promise<{ ok: true; paymentProofId: string; storagePath?: string; publicUrl?: string } | { ok: false; error: string }> {
@@ -1115,7 +1095,9 @@ export async function submitPaymentProof(
   try {
     logInfo("payment_api_start", withTrace({
       sessionId,
-      participantId,
+      paidByParticipantId,
+      coveredParticipantIds,
+      coveredCount: coveredParticipantIds.length,
       fileName,
       fileSize: fileData.length,
     }, traceId))
@@ -1138,24 +1120,72 @@ export async function submitPaymentProof(
     return { ok: false, error: "Session not found or not available" }
   }
 
-  // Verify participant exists (any status - users can pay without joining first)
-  const { data: participant, error: participantError } = await supabase
+  // Validate: Must have at least one covered participant
+  if (!coveredParticipantIds || coveredParticipantIds.length === 0) {
+    logError("payment_api_failed", withTrace({
+      error: "No participants selected",
+      stage: "validation",
+    }, traceId))
+    return { ok: false, error: "Please select at least one participant to pay for." }
+  }
+
+  // Verify paid_by participant exists (any status - users can pay without joining first)
+  const { data: paidByParticipant, error: paidByError } = await supabase
     .from("participants")
     .select("id, status")
-    .eq("id", participantId)
+    .eq("id", paidByParticipantId)
     .eq("session_id", sessionId)
     .single()
 
-  if (participantError || !participant) {
+  if (paidByError || !paidByParticipant) {
     logError("payment_api_failed", withTrace({
-      error: participantError?.message || "Participant not found",
+      error: paidByError?.message || "Paid-by participant not found",
       stage: "participant_validation",
-      errorCode: participantError?.code,
+      errorCode: paidByError?.code,
     }, traceId))
-    if (participantError?.code === "PGRST116") {
+    if (paidByError?.code === "PGRST116") {
       return { ok: false, error: "Participant not found." }
     }
     return { ok: false, error: "Participant not found." }
+  }
+
+  // CRITICAL: Validate ALL covered participants belong to this session and are active
+  const { data: coveredParticipants, error: coveredError } = await supabase
+    .from("participants")
+    .select("id, session_id, status")
+    .eq("session_id", sessionId)
+    .in("id", coveredParticipantIds)
+
+  if (coveredError) {
+    logError("payment_api_failed", withTrace({
+      error: coveredError.message,
+      stage: "covered_participants_validation",
+    }, traceId))
+    return { ok: false, error: "Failed to validate participants." }
+  }
+
+  // Check that all requested participants were found
+  const foundIds = new Set(coveredParticipants?.map(p => p.id) || [])
+  const missingIds = coveredParticipantIds.filter(id => !foundIds.has(id))
+  
+  if (missingIds.length > 0) {
+    logError("payment_api_failed", withTrace({
+      error: "Some participants not found",
+      missingIds,
+      stage: "covered_participants_validation",
+    }, traceId))
+    return { ok: false, error: `Some participants not found: ${missingIds.join(", ")}` }
+  }
+
+  // Verify all covered participants belong to this session (double-check)
+  const invalidParticipants = coveredParticipants?.filter(p => p.session_id !== sessionId)
+  if (invalidParticipants && invalidParticipants.length > 0) {
+    logError("payment_api_failed", withTrace({
+      error: "Participants belong to different session",
+      invalidIds: invalidParticipants.map(p => p.id),
+      stage: "covered_participants_validation",
+    }, traceId))
+    return { ok: false, error: "All participants must belong to the same session." }
   }
 
   // Convert base64 to buffer (with error handling)
@@ -1174,11 +1204,11 @@ export async function submitPaymentProof(
     
     buffer = Buffer.from(base64Data, "base64")
 
-    // Generate unique file path
+    // Generate unique file path (use paid_by participant ID for folder structure)
     const fileExt = fileName.split(".").pop() || "jpg"
     // Normalize file extension for content type
     const normalizedExt = fileExt.toLowerCase() === "jpg" || fileExt.toLowerCase() === "jpeg" ? "jpeg" : fileExt.toLowerCase()
-    filePath = `payment-proofs/${sessionId}/${participantId}/${Date.now()}.${fileExt}`
+    filePath = `payment-proofs/${sessionId}/${paidByParticipantId}/${Date.now()}.${fileExt}`
 
     // Use admin client for storage upload (bypasses RLS, but we've already validated participant on server)
     const adminClient = createAdminClient()
@@ -1230,17 +1260,26 @@ export async function submitPaymentProof(
     publicUrl = urlData.publicUrl
 
     logInfo("payment_validation_result", withTrace({
-      participantId,
+      paidByParticipantId,
+      coveredParticipantIds,
+      coveredCount: coveredParticipantIds.length,
       sessionId,
       validated: true,
     }, traceId))
 
-    // Insert payment_proofs record using admin client (bypasses RLS, but we've validated participant exists)
+    // Insert payment_proofs record using admin client
+    // We've already validated all participants belong to the session on the server side
+    // Using admin client bypasses RLS and ensures the insert succeeds
+    // Format covered_participant_ids as JSONB array
+    // Format: [{"participant_id": "uuid1"}, {"participant_id": "uuid2"}]
+    const coveredParticipantsJson = coveredParticipantIds.map(id => ({ participant_id: id }))
+
     const { data: proofData, error: insertError } = await adminClient
       .from("payment_proofs")
       .insert({
         session_id: sessionId,
-        participant_id: participantId,
+        participant_id: paidByParticipantId, // Keep for backward compatibility (who uploaded)
+        covered_participant_ids: coveredParticipantsJson, // NEW: Who is covered by this payment
         proof_image_url: publicUrl,
         payment_status: "pending_review",
         ocr_status: "pending",
@@ -1256,6 +1295,11 @@ export async function submitPaymentProof(
       }, traceId))
       // Try to clean up uploaded file using admin client
       await adminClient.storage.from("payment-proofs").remove([filePath])
+      
+      // Provide more helpful error messages
+      if (insertError.code === "42501") {
+        return { ok: false, error: "Permission denied. Please ensure the migration has been applied." }
+      }
       return { ok: false, error: "Failed to save payment proof. Please try again." }
     }
 

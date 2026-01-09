@@ -1,20 +1,41 @@
 /**
  * Guest identity key utility
- * Generates and persists a stable device key for anonymous participants
- * This key persists across sessions and reloads, allowing the app to recognize
- * the same guest user on return visits.
+ * 
+ * IMPORTANT: guest_key is NOT identity - it's a write-only identifier for tracking.
+ * Identity is determined by profile_id (sessionId + normalizedName) for guests.
+ * 
+ * We generate a NEW guest_key per guest join to prevent replacement bugs.
+ * The old approach of reusing guest_key caused issues when:
+ * - User signs out and joins as guest (reused key)
+ * - Multiple guests join from same browser (reused key)
  */
 
 const GUEST_KEY_STORAGE_KEY = "reserv_guest_key"
 
 /**
- * Get or create a stable guest key for this device
- * If no key exists, generates a new UUID and stores it in localStorage
- * Returns the same key on subsequent calls
+ * Generate a NEW guest key (always creates a new UUID)
+ * Use this when starting a new guest join to prevent identity confusion
+ * 
+ * This ensures each guest join gets a unique key, preventing replacement bugs
+ */
+export function generateNewGuestKey(): string {
+  if (typeof window === "undefined") {
+    throw new Error("generateNewGuestKey() should only be called on the client")
+  }
+
+  const newKey = crypto.randomUUID()
+  localStorage.setItem(GUEST_KEY_STORAGE_KEY, newKey)
+  return newKey
+}
+
+/**
+ * Get or create a guest key for this device
+ * 
+ * NOTE: This is for backward compatibility. For new guest joins,
+ * use generateNewGuestKey() to ensure a fresh key.
  */
 export function getOrCreateGuestKey(): string {
   if (typeof window === "undefined") {
-    // Server-side: return a placeholder (shouldn't be used on server)
     throw new Error("getOrCreateGuestKey() should only be called on the client")
   }
 
@@ -25,9 +46,7 @@ export function getOrCreateGuestKey(): string {
   }
 
   // Generate new UUID
-  const newKey = crypto.randomUUID()
-  localStorage.setItem(GUEST_KEY_STORAGE_KEY, newKey)
-  return newKey
+  return generateNewGuestKey()
 }
 
 /**
@@ -40,5 +59,16 @@ export function getGuestKey(): string | null {
   }
 
   return localStorage.getItem(GUEST_KEY_STORAGE_KEY)
+}
+
+/**
+ * Clear the guest key (used during identity reset)
+ */
+export function clearGuestKey(): void {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  localStorage.removeItem(GUEST_KEY_STORAGE_KEY)
 }
 

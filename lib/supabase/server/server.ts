@@ -62,11 +62,13 @@ export function createAdminClient() {
   }
   
   // Use createClient from @supabase/supabase-js directly for admin client
-  // This ensures service role key properly bypasses RLS
+  // Passing service role key as second parameter automatically bypasses RLS
+  // Keep configuration minimal - service role key handles authentication automatically
   return createSupabaseClient(url, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+      detectSessionInUrl: false,
     },
   });
 }

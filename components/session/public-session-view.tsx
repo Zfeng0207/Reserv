@@ -15,7 +15,15 @@ import { format, parseISO } from "date-fns"
 import { ArrowLeft, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { getOrCreateGuestKey, getGuestKey } from "@/lib/guest-key"
+import { getOrCreateGuestKey, getGuestKey, generateNewGuestKey, clearGuestKey } from "@/lib/guest-key"
+import { 
+  getCurrentIdentityScope, 
+  setCurrentIdentityScope, 
+  resetIdentityScope, 
+  setAuthIdentityScope, 
+  setGuestIdentityScope,
+  type IdentityScope 
+} from "@/lib/identity-scope"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -178,6 +186,7 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
   const [currentParticipantId, setCurrentParticipantId] = useState<string | null>(null)
   const [guestKey, setGuestKey] = useState<string | null>(null)
   const [spotsLeft, setSpotsLeft] = useState<number | null>(null)
+  const [currentIdentityScope, setCurrentIdentityScopeState] = useState<IdentityScope | null>(null)
   
   // Local state for participants (can be updated optimistically)
   const [participants, setParticipants] = useState<Participant[]>(initialParticipants)
@@ -207,6 +216,7 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
   // This prevents infinite loops when props are recreated with same content
   const prevParticipantsKeyRef = useRef<string>("")
   const prevWaitlistKeyRef = useRef<string>("")
+  const isInitialMountRef = useRef<boolean>(true)
   
   // Sync with props when they change (e.g., from server revalidation)
   // Only update if the actual content changed (compare by JSON stringified IDs)
@@ -215,6 +225,20 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
   useEffect(() => {
     const participantsKey = JSON.stringify(initialParticipants.map(p => p.id).sort())
     const waitlistKey = JSON.stringify(initialWaitlist.map(p => p.id).sort())
+    
+    // On initial mount, always sync from server props (they are the source of truth)
+    if (isInitialMountRef.current) {
+      setParticipants(initialParticipants)
+      setWaitlist(initialWaitlist)
+      prevParticipantsKeyRef.current = participantsKey
+      prevWaitlistKeyRef.current = waitlistKey
+      isInitialMountRef.current = false
+      console.log("[sync] Initial mount - synced from server", {
+        participantsCount: initialParticipants.length,
+        waitlistCount: initialWaitlist.length
+      })
+      return
+    }
     
     // Sync participants - check if server has NEW participants we don't have locally
     if (participantsKey !== prevParticipantsKeyRef.current) {
@@ -283,10 +307,42 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
   const [lastTraceId, setLastTraceId] = useState<string | null>(null)
   const [lastJoinError, setLastJoinError] = useState<string | null>(null)
 
-  // Initialize guest key on mount
+  // Fetch participants and waitlist from DB on mount (same logic as session control)
+  useEffect(() => {
+    const fetchParticipantsFromDB = async () => {
+      if (!publicCode) return
+      
+      try {
+        const result = await getSessionParticipants(publicCode)
+        if (result.ok) {
+          // Update both participants and waitlist from DB (source of truth)
+          setParticipants(result.participants.map(p => ({ ...p, status: "confirmed" as const })))
+          setWaitlist(result.waitlist.map(p => ({ ...p, status: "waitlisted" as const })))
+          console.log("[fetch] Loaded participants and waitlist from DB", {
+            participantsCount: result.participants.length,
+            waitlistCount: result.waitlist.length
+          })
+        } else {
+          console.error("[fetch] Failed to load participants from DB:", result.error)
+        }
+      } catch (error) {
+        console.error("[fetch] Error loading participants from DB:", error)
+      }
+    }
+    
+    fetchParticipantsFromDB()
+  }, [publicCode]) // Fetch on mount and when publicCode changes
+
+  // Initialize identity scope and guest key on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const key = getOrCreateGuestKey()
+      // Load current identity scope from localStorage
+      const scope = getCurrentIdentityScope()
+      setCurrentIdentityScopeState(scope)
+      
+      // Initialize guest key (only if no identity scope exists)
+      // If identity scope exists, we'll use it; otherwise generate a key for potential guest use
+      const key = getGuestKey() || (scope?.type === "guest" ? null : getOrCreateGuestKey())
       setGuestKey(key)
       
       // Log page load
@@ -298,11 +354,57 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         isAuthenticated,
         userId: authUser?.id || null,
         guestKey: key,
+        identityScope: scope,
         hasParticipants: participants.length > 0,
         waitlistCount: waitlist.length,
       })
     }
   }, [])
+
+  // HARD RESET: On ANY identity change, reset all browser state
+  // Identity changes: sign in, sign out, new guest join
+  const prevAuthRef = useRef(isAuthenticated)
+  const prevUserIdRef = useRef(authUser?.id || null)
+  
+  useEffect(() => {
+    // Detect identity change
+    const authChanged = prevAuthRef.current !== isAuthenticated
+    const userIdChanged = prevUserIdRef.current !== (authUser?.id || null)
+    const isIdentityChange = authChanged || userIdChanged
+    
+    if (isIdentityChange) {
+      logInfo("identity_change_detected", {
+        prevAuth: prevAuthRef.current,
+        newAuth: isAuthenticated,
+        prevUserId: prevUserIdRef.current,
+        newUserId: authUser?.id || null,
+        publicCode,
+      })
+      
+      // HARD RESET: Clear all identity-related browser state
+      resetIdentityScope(publicCode)
+      clearGuestKey()
+      setGuestKey(null)
+      setStoredParticipantInfo(null)
+      setRsvpState("none")
+      setCurrentParticipantId(null)
+      setCurrentIdentityScopeState(null)
+      
+      // If signing in, set auth identity scope
+      if (isAuthenticated && authUser?.id) {
+        setAuthIdentityScope(authUser.id)
+        setCurrentIdentityScopeState({ type: "auth", id: authUser.id })
+      } else if (!isAuthenticated) {
+        // Signed out - clear identity scope
+        setCurrentIdentityScope(null)
+        setCurrentIdentityScopeState(null)
+      }
+    }
+    
+    // Update refs
+    prevAuthRef.current = isAuthenticated
+    prevUserIdRef.current = authUser?.id || null
+  }, [isAuthenticated, authUser?.id, publicCode])
 
   // Load participant RSVP status (server-driven, re-fetches on auth changes)
   // CRITICAL: Re-fetch whenever auth state changes to ensure join state matches current user
@@ -634,33 +736,36 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         return
       }
 
+      // IDENTITY SCOPE: Generate NEW guest_key for guest joins (prevent replacement)
+      // For authenticated users, guest_key is still used for tracking but identity is by email
+      let joinGuestKey = guestKey
+      
+      if (!isAuthenticated) {
+        // Guest join: Generate NEW guest_key to prevent replacement bugs
+        // This ensures each guest join is independent, even with same name
+        joinGuestKey = generateNewGuestKey()
+        setGuestKey(joinGuestKey)
+        logInfo("guest_join_new_key_generated", withTrace({
+          newGuestKey: joinGuestKey,
+          reason: "prevent_replacement",
+        }, traceId))
+      } else if (!joinGuestKey) {
+        // Authenticated user but no guest_key - generate one for tracking
+        joinGuestKey = generateNewGuestKey()
+        setGuestKey(joinGuestKey)
+      }
+
       // Store participant info in localStorage
       const storageKey = `reserv_rsvp_${publicCode}`
       localStorage.setItem(storageKey, JSON.stringify({ name, phone }))
       setStoredParticipantInfo({ name, phone })
-
-      if (!guestKey) {
-        const error = "Unable to identify device. Please refresh the page."
-        logError("join_failed_client", withTrace({ 
-          error,
-          stage: "validation",
-          reason: "missing_guestKey",
-        }, traceId))
-        setLastJoinError(error)
-        toast({
-          title: "Error",
-          description: error,
-          variant: "destructive",
-        })
-        return
-      }
 
       // Log request details
       const requestPayload = {
         publicCode,
         name,
         phone: phone || null,
-        guestKey,
+        guestKey: joinGuestKey,
       }
       
       logInfo("join_request", withTrace({
@@ -669,14 +774,15 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         hasName: !!name,
         nameLength: name.length,
         hasPhone: !!phone,
-        guestKey,
+        guestKey: joinGuestKey,
         isAuthenticated,
         userId: authUser?.id || null,
+        isNewGuestKey: !isAuthenticated,
         payload: requestPayload,
       }, traceId))
 
       // Use server action for type-safe join
-      const result = await joinSession(publicCode, name, guestKey, phone || null, traceId)
+      const result = await joinSession(publicCode, name, joinGuestKey, phone || null, traceId)
       
       logInfo("join_response", withTrace({ 
         ok: result.ok,
@@ -739,6 +845,24 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         return
       }
       
+      // IDENTITY SCOPE: Set identity scope after successful join
+      if (isAuthenticated && authUser?.id) {
+        // Auth user: set auth identity scope
+        setAuthIdentityScope(authUser.id)
+        setCurrentIdentityScopeState({ type: "auth", id: authUser.id })
+      } else if (!isAuthenticated) {
+        // Guest: set guest identity scope using profile_id (guestKey UUID)
+        // For guests, profile_id = guestKey (UUID) - this ensures uniqueness
+        const guestProfileId = joinGuestKey // profile_id is guestKey for guests
+        setGuestIdentityScope(guestProfileId, session.id, name)
+        setCurrentIdentityScopeState({ 
+          type: "guest", 
+          id: guestProfileId,
+          sessionId: session.id,
+          guestName: name,
+        })
+      }
+      
       // Update state - waitlisted defaults to false if not present
       const isWaitlisted = result.waitlisted === true
       const isAlreadyJoined = result.alreadyJoined === true
@@ -799,22 +923,22 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         setSpotsLeft(remaining)
       }
       
-      // Refetch participants and waitlist from server - same logic as session control
-      // This ensures both confirmed and waitlist stay in sync with server
+      // Refetch participants and waitlist from DB - same logic as session control
+      // This ensures both confirmed and waitlist stay in sync with database
       if (publicCode) {
         try {
           const refetchResult = await getSessionParticipants(publicCode)
           if (refetchResult.ok) {
-            // Update both participants and waitlist from server response
+            // Update both participants and waitlist from DB (source of truth)
             setParticipants(refetchResult.participants.map(p => ({ ...p, status: "confirmed" as const })))
             setWaitlist(refetchResult.waitlist.map(p => ({ ...p, status: "waitlisted" as const })))
-            console.log("[refetch] Updated participants and waitlist from server", {
+            console.log("[refetch] Updated participants and waitlist from DB", {
               participantsCount: refetchResult.participants.length,
               waitlistCount: refetchResult.waitlist.length
             })
           }
         } catch (error) {
-          console.error("[refetch] Failed to refetch participants", error)
+          console.error("[refetch] Failed to refetch participants from DB", error)
           // Don't fail the join if refetch fails - optimistic update is already applied
         }
       }
@@ -840,11 +964,19 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
     // If user has already joined, do nothing
     if (rsvpState === "joined") return
 
-    // If user is authenticated, proceed directly to join (we'll use their auth info)
+    // If user is authenticated, show dialog with pre-filled name from email
     if (isAuthenticated && authUser) {
-      // Use authenticated user's info
-      const userName = authUser.user_metadata?.full_name || authUser.email?.split("@")[0] || "User"
-      handleRSVPContinue(userName, null)
+      // Pre-fill name from Gmail/email metadata
+      const userName = authUser.user_metadata?.full_name || 
+                       authUser.user_metadata?.name || 
+                       authUser.email?.split("@")[0] || 
+                       ""
+      // Set initial name for dialog
+      if (userName) {
+        setStoredParticipantInfo({ name: userName, phone: null })
+      }
+      // Open RSVP dialog (same as guest flow)
+      setRsvpDialogOpen(true)
       return
     }
 
@@ -879,15 +1011,23 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
     }, 100)
   }
 
-  // Handle successful login - proceed to join
+  // Handle successful login - show name/phone dialog instead of auto-joining
   useEffect(() => {
     if (isAuthenticated && authUser && loginDialogOpen) {
-      // User just logged in, proceed to join directly
+      // User just logged in, show dialog with pre-filled name from email
       setLoginDialogOpen(false)
-      const userName = authUser.user_metadata?.full_name || authUser.email?.split("@")[0] || "User"
-      // Small delay to ensure dialog closes before proceeding
+      // Pre-fill name from Gmail/email metadata
+      const userName = authUser.user_metadata?.full_name || 
+                       authUser.user_metadata?.name || 
+                       authUser.email?.split("@")[0] || 
+                       ""
+      // Set initial name for dialog
+      if (userName) {
+        setStoredParticipantInfo({ name: userName, phone: null })
+      }
+      // Small delay to ensure login dialog closes before RSVP dialog opens
       setTimeout(() => {
-        handleRSVPContinue(userName, null)
+        setRsvpDialogOpen(true)
       }, 100)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1130,7 +1270,7 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         publicCode={publicCode}
         hostSlug={urlHostSlug || session.host_slug || null}
         onMakePaymentClick={handleMakePaymentClick}
-        payingForParticipantId={payingForParticipantIds[0] || null} // For now, use first selected for payment submission
+        payingForParticipantIds={payingForParticipantIds} // Pass all selected participant IDs
         payingForParticipantNames={payingForParticipantNames}
         isFull={capacityState.isFull}
         joinedCount={capacityState.joinedCount}
@@ -1145,14 +1285,23 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
         onContinueAsGuest={handleContinueAsGuest}
       />
 
-      {/* RSVP Dialog - shown after choosing guest */}
+      {/* RSVP Dialog - shown for both guests and authenticated users */}
       <GuestRSVPDialog
         open={rsvpDialogOpen}
         onOpenChange={setRsvpDialogOpen}
         onContinue={handleRSVPContinue}
         uiMode={uiMode}
         action="join"
-        initialName={storedParticipantInfo?.name || ""}
+        initialName={
+          // For authenticated users, use name from email/Gmail
+          // For guests, use stored participant info
+          isAuthenticated && authUser
+            ? authUser.user_metadata?.full_name || 
+              authUser.user_metadata?.name || 
+              authUser.email?.split("@")[0] || 
+              ""
+            : storedParticipantInfo?.name || ""
+        }
       />
 
       {/* Make Payment Dialog */}
@@ -1164,13 +1313,13 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
           )}
         >
           <DialogHeader>
-            <DialogTitle className={cn("text-2xl font-bold", uiMode === "dark" ? "text-white" : "text-black")}>
+            <DialogTitle className={cn("text-2xl font-bold mb-1", uiMode === "dark" ? "text-white" : "text-black")}>
               Make payment
             </DialogTitle>
-            <DialogDescription className={cn(uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+            <DialogDescription className={cn("text-base", uiMode === "dark" ? "text-white/70" : "text-black/70")}>
               {unpaidParticipants.length === 0
                 ? "Everyone's paid ✅"
-                : "Select which participant(s) to pay for"}
+                : `Select which participant(s) to pay for (${unpaidParticipants.length} unpaid)`}
             </DialogDescription>
           </DialogHeader>
           {unpaidParticipants.length === 0 ? (
@@ -1194,62 +1343,85 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
             </div>
           ) : (
             <>
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-3 max-h-[300px] overflow-y-auto">
+              <div className="grid gap-4 py-2">
+                <div className="grid gap-3 max-h-[60vh] overflow-y-auto pr-2">
                   {isLoadingUnpaid ? (
                     <p className={cn("text-sm text-center py-4", uiMode === "dark" ? "text-white/60" : "text-black/60")}>
                       Loading participants...
                     </p>
                   ) : (
-                    unpaidParticipants.map((participant) => (
-                      <div
-                        key={participant.id}
-                        className={cn(
-                          "flex items-center space-x-3 p-3 rounded-lg transition-colors",
-                          uiMode === "dark"
-                            ? "hover:bg-white/5"
-                            : "hover:bg-black/5"
-                        )}
-                      >
-                        <Checkbox
-                          id={`participant-${participant.id}`}
-                          checked={selectedParticipantIds.includes(participant.id)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedParticipantIds((prev) => [...prev, participant.id])
-                            } else {
+                    unpaidParticipants.map((participant) => {
+                      const isSelected = selectedParticipantIds.includes(participant.id)
+                      return (
+                        <div
+                          key={participant.id}
+                          onClick={() => {
+                            if (isSelected) {
                               setSelectedParticipantIds((prev) => prev.filter((id) => id !== participant.id))
+                            } else {
+                              setSelectedParticipantIds((prev) => [...prev, participant.id])
                             }
                           }}
                           className={cn(
-                            uiMode === "dark"
-                              ? "border-white/30 data-[state=checked]:bg-lime-500 data-[state=checked]:border-lime-500"
-                              : "border-black/30 data-[state=checked]:bg-lime-500 data-[state=checked]:border-lime-500"
-                          )}
-                        />
-                        <Label
-                          htmlFor={`participant-${participant.id}`}
-                          className={cn(
-                            "flex-1 cursor-pointer text-sm font-medium",
-                            uiMode === "dark" ? "text-white" : "text-black"
+                            "flex items-center space-x-4 p-4 rounded-xl transition-all cursor-pointer border-2",
+                            isSelected
+                              ? uiMode === "dark"
+                                ? "bg-lime-500/20 border-lime-500/50 shadow-lg shadow-lime-500/10"
+                                : "bg-lime-500/10 border-lime-500/50 shadow-lg shadow-lime-500/10"
+                              : uiMode === "dark"
+                                ? "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20"
+                                : "bg-black/5 border-black/10 hover:bg-black/10 hover:border-black/20"
                           )}
                         >
-                          {participant.display_name}
-                        </Label>
-                      </div>
-                    ))
+                          <Checkbox
+                            id={`participant-${participant.id}`}
+                            checked={isSelected}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setSelectedParticipantIds((prev) => [...prev, participant.id])
+                              } else {
+                                setSelectedParticipantIds((prev) => prev.filter((id) => id !== participant.id))
+                              }
+                            }}
+                            className={cn(
+                              "h-6 w-6 border-2 transition-all",
+                              uiMode === "dark"
+                                ? "border-white/40 data-[state=checked]:bg-lime-500 data-[state=checked]:border-lime-500 data-[state=checked]:shadow-lg"
+                                : "border-black/40 data-[state=checked]:bg-lime-500 data-[state=checked]:border-lime-500 data-[state=checked]:shadow-lg"
+                            )}
+                          />
+                          <Label
+                            htmlFor={`participant-${participant.id}`}
+                            className={cn(
+                              "flex-1 cursor-pointer text-base font-semibold select-none",
+                              isSelected
+                                ? uiMode === "dark"
+                                  ? "text-lime-400"
+                                  : "text-lime-600"
+                                : uiMode === "dark"
+                                  ? "text-white"
+                                  : "text-black"
+                            )}
+                          >
+                            {participant.display_name}
+                          </Label>
+                        </div>
+                      )
+                    })
                   )}
                 </div>
                 {selectedParticipantIds.length > 0 && (
                   <div className={cn(
-                    "text-xs px-2",
-                    uiMode === "dark" ? "text-white/60" : "text-black/60"
+                    "text-sm font-medium px-2 py-2 rounded-lg",
+                    uiMode === "dark" 
+                      ? "bg-lime-500/20 text-lime-400 border border-lime-500/30"
+                      : "bg-lime-500/20 text-lime-600 border border-lime-500/30"
                   )}>
-                    {selectedParticipantIds.length} participant{selectedParticipantIds.length !== 1 ? "s" : ""} selected
+                    ✓ {selectedParticipantIds.length} participant{selectedParticipantIds.length !== 1 ? "s" : ""} selected
                   </div>
                 )}
               </div>
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-3 pt-2">
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -1257,9 +1429,10 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
                     setSelectedParticipantIds([]) // Reset selection on cancel
                   }}
                   className={cn(
+                    "px-6 h-12 font-medium rounded-full",
                     uiMode === "dark"
-                      ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
-                      : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
+                      ? "border-white/30 bg-white/5 hover:bg-white/10 text-white"
+                      : "border-black/30 bg-black/5 hover:bg-black/10 text-black"
                   )}
                 >
                   Cancel
@@ -1267,9 +1440,14 @@ function PublicSessionViewContent({ session, participants: initialParticipants, 
                 <Button
                   onClick={handlePaymentContinue}
                   disabled={selectedParticipantIds.length === 0 || isLoadingUnpaid}
-                  className="bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full disabled:opacity-50 disabled:cursor-not-allowed"
+                  className={cn(
+                    "px-8 h-12 font-semibold rounded-full shadow-lg transition-all",
+                    selectedParticipantIds.length === 0 || isLoadingUnpaid
+                      ? "opacity-50 cursor-not-allowed bg-gray-400"
+                      : "bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 hover:shadow-xl hover:scale-105 text-black"
+                  )}
                 >
-                  Continue ({selectedParticipantIds.length})
+                  {isLoadingUnpaid ? "Loading..." : `Continue (${selectedParticipantIds.length})`}
                 </Button>
               </div>
             </>

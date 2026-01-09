@@ -94,7 +94,7 @@ interface SessionInviteProps {
   hostSlug?: string | null // Host slug for sharing (available on public invite page)
   hasStarted?: boolean // Whether the session has started (for payment flow)
   onMakePaymentClick?: () => void // Handler for make payment button
-  payingForParticipantId?: string | null // ID of participant being paid for (first selected, for payment submission)
+  payingForParticipantIds?: string[] // Array of participant IDs being paid for (all selected participants)
   payingForParticipantNames?: string[] // Names of all participants being paid for (for display)
   isFull?: boolean // Whether the session is at capacity
   joinedCount?: number // Number of confirmed participants
@@ -131,7 +131,7 @@ export function SessionInvite({
   hostSlug,
   hasStarted = false,
   onMakePaymentClick,
-  payingForParticipantId = null,
+  payingForParticipantIds = [],
   payingForParticipantNames = [],
   isFull = false,
   joinedCount = 0,
@@ -1428,10 +1428,10 @@ export function SessionInvite({
 
         const { submitPaymentProof } = await import("@/app/session/[id]/actions")
       
-      // Use participant ID from props
-      if (!payingForParticipantId) {
+      // Use participant IDs from props - need at least one covered participant
+      if (!payingForParticipantIds || payingForParticipantIds.length === 0) {
         logError("upload_failed", withTrace({
-          error: "No participant ID provided",
+          error: "No participant IDs provided",
           stage: "validation",
         }, traceId))
         toast({
@@ -1442,10 +1442,16 @@ export function SessionInvite({
         setIsSubmittingProof(false)
         return
       }
+
+      // Get current participant ID (who is uploading) - use first selected as paid_by for now
+      // In the future, we might want to track the actual uploader separately
+      const paidByParticipantId = payingForParticipantIds[0] // Use first selected as who uploaded
+      const coveredParticipantIds = payingForParticipantIds // All selected participants are covered
         
         const result = await submitPaymentProof(
           actualSessionId,
-        payingForParticipantId,
+          paidByParticipantId,
+          coveredParticipantIds,
           base64Data,
         proofImageFile?.name || "payment-proof.jpg"
         )

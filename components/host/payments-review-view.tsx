@@ -1,17 +1,22 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
-import { ArrowLeft, Check, Clock, Image as ImageIcon, X, DollarSign } from "lucide-react"
+import { ArrowLeft, Check, Clock, Image as ImageIcon, X, DollarSign, Sparkles, ChevronDown, AlertTriangle, AlertCircle } from "lucide-react"
 import { formatDistanceToNow, parseISO } from "date-fns"
 import Image from "next/image"
+
+type ValidationStatus = "success" | "partial" | "failed"
+type ValidationResultItem = { id: string; status: "approved" | "flagged" | "failed"; reason?: string; participant_name: string }
 
 interface PaymentUpload {
   id: string | null // null if no payment proof exists
@@ -34,11 +39,16 @@ interface PaymentsReviewViewProps {
 export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReviewViewProps) {
   const router = useRouter()
   const { toast } = useToast()
+  const listRef = useRef<HTMLDivElement>(null)
   const [uploads, setUploads] = useState<PaymentUpload[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [markingCashId, setMarkingCashId] = useState<string | null>(null)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
+  const [validatingAll, setValidatingAll] = useState(false)
+  const [validationResult, setValidationResult] = useState<{ status: ValidationStatus; results: ValidationResultItem[] } | null>(null)
+  const [approvingValidation, setApprovingValidation] = useState(false)
+  const [validationCollapsibleOpen, setValidationCollapsibleOpen] = useState(true)
 
   const glassCard = uiMode === "dark"
     ? "bg-black/30 border-white/20 text-white backdrop-blur-sm"
@@ -159,6 +169,75 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
     }
   }
 
+  const handleValidateAll = async () => {
+    setValidatingAll(true)
+    setValidationResult(null)
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/validate-payments`, { method: "POST" })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast({
+          title: "Validation failed",
+          description: data.error || "Could not validate receipts.",
+          variant: "destructive",
+        })
+        return
+      }
+      setValidationResult({ status: data.status, results: data.results || [] })
+    } catch (err: any) {
+      toast({
+        title: "Validation failed",
+        description: err?.message || "Network error.",
+        variant: "destructive",
+      })
+    } finally {
+      setValidatingAll(false)
+    }
+  }
+
+  const handleApproveValidation = async () => {
+    if (!validationResult) return
+    const toApprove = validationResult.results.filter((r) => r.status === "approved").map((r) => r.id)
+    if (toApprove.length === 0) return
+    setApprovingValidation(true)
+    try {
+      const { bulkApprovePaymentProofs } = await import("@/app/host/sessions/[id]/actions")
+      const result = await bulkApprovePaymentProofs(sessionId, toApprove)
+      if (!result.ok) {
+        toast({
+          title: "Approve failed",
+          description: result.error || "Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+      toast({
+        title: "Payments approved",
+        description: `${toApprove.length} payment(s) marked as confirmed.`,
+      })
+      setValidationResult(null)
+      const { getPaymentUploadsForSession } = await import("@/app/host/sessions/[id]/actions")
+      const refreshResult = await getPaymentUploadsForSession(sessionId)
+      if (refreshResult.ok) setUploads(refreshResult.uploads)
+      router.refresh()
+    } catch (err: any) {
+      toast({
+        title: "Approve failed",
+        description: err?.message || "Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setApprovingValidation(false)
+    }
+  }
+
+  const scrollToProof = (proofId: string) => {
+    const el = listRef.current?.querySelector(`[data-proof-id="${proofId}"]`)
+    if (el) {
+      ;(el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" })
+    }
+  }
+
   const getInitial = (name: string) => {
     return name.charAt(0).toUpperCase() || "?"
   }
@@ -231,7 +310,7 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
     <div className={cn("min-h-screen pb-[200px]", uiMode === "dark" ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900" : "bg-white")}>
       <div className="p-4 space-y-4">
         {/* Header */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <Button
             onClick={onBack}
             variant="ghost"
@@ -242,10 +321,11 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
                 ? "text-white hover:bg-white/10"
                 : "text-black hover:bg-black/10"
             )}
+            aria-label="Back to session control"
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <h1 className={cn("text-2xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
               Payment uploads
             </h1>
@@ -255,7 +335,141 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
               </p>
             )}
           </div>
+          {uploads.length > 0 && (
+            <Button
+              onClick={handleValidateAll}
+              disabled={validatingAll}
+              className={cn(
+                "shrink-0 rounded-full px-4 py-2 text-sm font-medium",
+                "bg-gradient-to-r from-violet-500 via-fuchsia-500 to-indigo-500",
+                "text-white hover:from-violet-400 hover:via-fuchsia-400 hover:to-indigo-400",
+                "shadow-lg shadow-violet-500/25",
+                "animate-pulse hover:animate-none",
+                "transition-all duration-300",
+                validatingAll && "opacity-70 pointer-events-none"
+              )}
+              aria-label="Validate all payment receipts with AI"
+              aria-busy={validatingAll}
+            >
+              <Sparkles className="w-4 h-4 mr-2 shrink-0" aria-hidden />
+              {validatingAll ? "Validating…" : "AI Validate All"}
+            </Button>
+          )}
         </div>
+
+        {/* Full-screen validation overlay */}
+        <AnimatePresence>
+          {validatingAll && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-black/70 backdrop-blur-sm"
+              role="status"
+              aria-live="polite"
+              aria-label="Validating receipts"
+            >
+              <div className={cn("w-12 h-12 rounded-full border-2 border-t-transparent border-white/80 animate-spin")} />
+              <p className={cn("text-lg font-medium", "text-white")}>Validating receipts…</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Validation result banners */}
+        {validationResult && !validatingAll && (
+          <div className="space-y-3" role="region" aria-label="Validation result">
+            {validationResult.status === "success" && (
+              <Alert className={cn("rounded-xl border-green-500/30 bg-green-500/10")}>
+                <Check className="h-4 w-4 text-green-500" aria-hidden />
+                <AlertTitle className="text-green-600 dark:text-green-400">All payments confirmed!</AlertTitle>
+                <AlertDescription>
+                  {validationResult.results.length === 0
+                    ? "No pending proofs to validate."
+                    : `${validationResult.results.length} receipt(s) validated.`}
+                  {uploads.some((u) => !u.id || u.paymentStatus !== "approved") && (
+                    <span className="block mt-2">
+                      Unpaid: {uploads.filter((u) => !u.id || u.paymentStatus !== "approved").map((u) => u.participantName).join(", ") || "—"}
+                    </span>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+            {validationResult.status === "partial" && (
+              <Alert className={cn("rounded-xl border-amber-500/30 bg-amber-500/10")}>
+                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
+                <AlertTitle className="text-amber-700 dark:text-amber-300">
+                  {validationResult.results.filter((r) => r.status === "approved").length} approved, {validationResult.results.filter((r) => r.status === "flagged" || r.status === "failed").length} flagged
+                </AlertTitle>
+                <AlertDescription>
+                  <Collapsible open={validationCollapsibleOpen} onOpenChange={setValidationCollapsibleOpen}>
+                    <CollapsibleTrigger asChild>
+                      <button
+                        type="button"
+                        className={cn("flex items-center gap-1 font-medium underline underline-offset-2", uiMode === "dark" ? "text-white/90" : "text-black/90")}
+                        aria-expanded={validationCollapsibleOpen}
+                      >
+                        View issues <ChevronDown className={cn("w-4 h-4 transition-transform", validationCollapsibleOpen && "rotate-180")} />
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <ul className="mt-2 list-disc list-inside space-y-1 text-sm">
+                        {validationResult.results.filter((r) => r.status !== "approved").map((r) => (
+                          <li key={r.id}>
+                            {r.participant_name}: {r.reason || r.status}
+                          </li>
+                        ))}
+                      </ul>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </AlertDescription>
+              </Alert>
+            )}
+            {validationResult.status === "failed" && (
+              <Alert className={cn("rounded-xl border-red-500/30 bg-red-500/10")} variant="destructive">
+                <AlertCircle className="h-4 w-4 text-red-500" aria-hidden />
+                <AlertTitle className="text-red-700 dark:text-red-300">Fraud detected / duplicates found</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc list-inside space-y-1 text-sm">
+                    {validationResult.results.filter((r) => r.status === "failed").map((r) => (
+                      <li key={r.id}>{r.participant_name}: {r.reason || "Validation failed"}</li>
+                    ))}
+                  </ul>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn("mt-3 rounded-full", uiMode === "dark" ? "border-white/20 text-white hover:bg-white/10" : "border-black/20 text-black hover:bg-black/10")}
+                    onClick={() => validationResult.results.filter((r) => r.status === "failed").length > 0 && scrollToProof(validationResult.results.find((r) => r.status === "failed")!.id)}
+                    aria-label="Scroll to first affected payment card"
+                  >
+                    Review manually
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {validationResult.results.some((r) => r.status === "approved") && (
+                <Button
+                  onClick={handleApproveValidation}
+                  disabled={approvingValidation}
+                  className="rounded-full bg-gradient-to-r from-lime-500 to-emerald-500 text-black font-medium hover:from-lime-400 hover:to-emerald-400"
+                  aria-label="Approve validated payments"
+                >
+                  {approvingValidation ? "Approving…" : "Approve validation"}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn("rounded-full", uiMode === "dark" ? "text-white/80 hover:text-white" : "text-black/80 hover:text-black")}
+                onClick={() => setValidationResult(null)}
+                aria-label="Dismiss validation result"
+              >
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Empty state */}
         {!loading && uploads.length === 0 && (
@@ -272,7 +486,7 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
 
         {/* Upload list */}
         {uploads.length > 0 && (
-          <div className="space-y-4">
+          <div ref={listRef} className="space-y-4">
             {uploads.map((upload) => {
               const statusBadge = getStatusBadge(upload.paymentStatus)
               const isConfirming = confirmingId === upload.id
@@ -287,6 +501,8 @@ export function PaymentsReviewView({ sessionId, uiMode, onBack }: PaymentsReview
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3 }}
+                  data-participant-id={upload.participantId}
+                  {...(upload.id ? { "data-proof-id": upload.id } : {})}
                 >
                   <Card className={cn("p-4", glassCard)}>
                     <div className="space-y-4">

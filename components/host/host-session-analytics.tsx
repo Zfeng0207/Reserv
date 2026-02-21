@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { logInfo, logError, logWarn, newTraceId, withTrace } from "@/lib/logger"
-import { Ban, CheckCircle2, Clock, Calendar, DollarSign, Users, ChevronRight, Plus, X, Bell } from "lucide-react"
+import { Ban, CheckCircle2, Clock, Calendar, DollarSign, Users, ChevronRight, Plus, X, Bell, UserPlus, Sparkles } from "lucide-react"
 import { formatDistanceToNow, format, isPast, isFuture, parseISO } from "date-fns"
 import { CopyInviteLinkButton } from "@/components/common/copy-invite-link-button"
 import { SaveDraftGuardModal } from "@/components/host/save-draft-guard-modal"
@@ -116,6 +116,10 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
     start_at: string
     end_at: string | null
     location: string | null
+    map_url?: string | null
+    court_numbers?: string | null
+    payment_qr_image?: string | null
+    capacity?: number | null
     sport: string
     price: number | null
   } | null>(null)
@@ -136,6 +140,11 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
     customOffsetMinutes: number | null
   }>>([])
   const [isSavingPromptConfig, setIsSavingPromptConfig] = useState(false)
+
+  // Smart Reminder (Gemini)
+  const [smartReminderOpen, setSmartReminderOpen] = useState(false)
+  const [smartReminderText, setSmartReminderText] = useState("")
+  const [isGeneratingSmartReminder, setIsGeneratingSmartReminder] = useState(false)
 
   // Check if we should show payments view
   const mode = searchParams.get("mode")
@@ -266,6 +275,159 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
 
     fetchAnalytics()
   }, [sessionId])
+
+  const ensurePaidParticipantsLoaded = async () => {
+    try {
+      const { getPaymentUploadsForSession } = await import("@/app/host/sessions/[id]/actions")
+      const paymentResult = await getPaymentUploadsForSession(sessionId)
+      if (!paymentResult.ok) return
+
+      const paidIds = new Set<string>()
+      paymentResult.uploads.forEach((upload) => {
+        if (upload.paymentStatus === "approved") {
+          paidIds.add(upload.participantId)
+        }
+      })
+      setPaidParticipantIds(paidIds)
+    } catch (error) {
+      // Non-blocking for reminder generation
+      console.warn("[ensurePaidParticipantsLoaded] Failed:", error)
+    }
+  }
+
+  const buildInviteUrl = (hostSlug: string | null, publicCode: string | null) => {
+    if (typeof window === "undefined") return ""
+    if (hostSlug && publicCode) {
+      return `${window.location.origin}/${hostSlug}/${publicCode}`
+    }
+    return `${window.location.origin}/host/sessions/${sessionId}/edit`
+  }
+
+  const formatOptionalLine = (label: string, value: string | null | undefined) => {
+    const v = (value || "").trim()
+    if (!v) return null
+    return `${label}${v}`
+  }
+
+  const generateSmartReminderText = async () => {
+    if (!analytics) return
+
+    setIsGeneratingSmartReminder(true)
+    try {
+      // Ensure we have session details for templates (already fetched for prompts in open sessions)
+      if (!sessionData) {
+        const { getSessionDataForPrompts } = await import("@/app/host/sessions/[id]/actions")
+        const sessionDataResult = await getSessionDataForPrompts(sessionId)
+        if (sessionDataResult.ok) {
+          setSessionData(sessionDataResult.session)
+        }
+      }
+
+      // Ensure payment info is available for Phase 4
+      await ensurePaidParticipantsLoaded()
+
+      const startAtIso = analytics.startAt || sessionData?.start_at || null
+      if (!startAtIso) {
+        toast({
+          title: "Can't generate reminder",
+          description: "Missing session start time.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const startAt = new Date(startAtIso)
+      const now = new Date()
+      const fourHoursBefore = new Date(startAt.getTime() - 4 * 60 * 60 * 1000)
+      const oneHourAfter = new Date(startAt.getTime() + 1 * 60 * 60 * 1000)
+
+      const title = (sessionData?.title || "").trim() || "Session"
+      const venue = (sessionData?.location || "").trim()
+      const locationLink = (sessionData?.map_url || "").trim()
+      const courtName = (sessionData?.court_numbers || "").trim()
+      const bankQrImageUrl = (sessionData?.payment_qr_image || "").trim()
+      const price = sessionData?.price
+      const inviteUrl = buildInviteUrl(analytics.hostSlug, analytics.publicCode)
+
+      const capacity = sessionData?.capacity ?? analytics.attendance.capacity ?? null
+      const spotsLeft =
+        typeof capacity === "number" && capacity > 0
+          ? Math.max(0, capacity - analytics.attendance.accepted)
+          : null
+
+      const confirmedNames = analytics.acceptedList.map((p) => p.display_name).filter(Boolean)
+      const paidNames = analytics.acceptedList.filter((p) => paidParticipantIds.has(p.id)).map((p) => p.display_name).filter(Boolean)
+      const pendingNames = analytics.acceptedList.filter((p) => !paidParticipantIds.has(p.id)).map((p) => p.display_name).filter(Boolean)
+
+      const numberedList = (names: string[]) => names.map((name, idx) => `${idx + 1}. ${name}`).join("\n")
+
+      let lines: Array<string | null> = []
+
+      // Phase detection
+      const phase =
+        now < fourHoursBefore
+          ? 1
+          : now >= fourHoursBefore && now < startAt
+          ? 2
+          : now >= startAt && now < oneHourAfter
+          ? 3
+          : 4
+
+      if (phase === 1) {
+        lines = [
+          "1234567",
+          title,
+          spotsLeft !== null ? `${spotsLeft} of ${capacity} spots left! Hurry up and join!` : "Spots are limited! Hurry up and join!",
+          "",
+          "Confirmed attendance:",
+          confirmedNames.length ? numberedList(confirmedNames) : "",
+          "",
+          inviteUrl,
+        ]
+      } else if (phase === 2) {
+        lines = [
+          "123456",
+          title,
+          venue ? `Location: ${venue}` : null,
+          locationLink || null,
+          formatOptionalLine("Courts Booked: ", courtName),
+          inviteUrl,
+        ]
+      } else if (phase === 3) {
+        lines = [
+          "123456",
+          bankQrImageUrl || null,
+          title,
+          "Thanks for joining!",
+          typeof price === "number" ? `The session fee is RM${price}.` : null,
+          "Please make your payment promptly and upload your proof here:",
+          inviteUrl,
+        ]
+      } else {
+        lines = [
+          "123456",
+          title,
+          "Confirmed Payments:",
+          paidNames.length ? numberedList(paidNames) : "",
+          "",
+          "Payment Pending:",
+          pendingNames.length ? numberedList(pendingNames) : "",
+        ]
+      }
+
+      // Clean nulls; preserve intentional blank lines
+      const finalText = lines
+        .filter((l) => l !== null)
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+
+      setSmartReminderText(finalText)
+      setSmartReminderOpen(true)
+    } finally {
+      setIsGeneratingSmartReminder(false)
+    }
+  }
 
   // Refetch analytics after add/remove
   const refetchAnalytics = async () => {
@@ -715,39 +877,29 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              onClick={async () => {
-                // Fetch all prompts (even dismissed ones) for manual trigger
-                const { getSessionPrompts } = await import("@/app/host/sessions/[id]/actions")
-                const promptsResult = await getSessionPrompts(sessionId)
-                if (promptsResult.ok) {
-                  setAvailablePrompts(promptsResult.prompts.map(p => ({
-                    id: p.id,
-                    type: p.type,
-                    defaultOffsetMinutes: p.defaultOffsetMinutes,
-                    customOffsetMinutes: p.customOffsetMinutes,
-                    shownAt: p.shownAt,
-                    dismissedAt: p.dismissedAt,
-                  })))
-                  setManualRemindersDialogOpen(true)
-                }
-              }}
-              variant="outline"
-              size="sm"
-              className={cn(
-                "shrink-0",
-                uiMode === "dark"
-                  ? "border-white/20 bg-white/5 text-white hover:bg-white/10"
-                  : "border-black/20 bg-black/5 text-black hover:bg-black/10"
-              )}
-            >
-              <Bell className="w-4 h-4 mr-2" />
-              Reminders
-            </Button>
+            {role === "owner" && (
+              <Button
+                onClick={() => setManageAccessOpen(true)}
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "shrink-0",
+                  uiMode === "dark"
+                    ? "border-white/20 bg-white/5 text-white hover:bg-white/10"
+                    : "border-black/20 bg-black/5 text-black hover:bg-black/10"
+                )}
+                aria-label="Manage access"
+              >
+                <UserPlus className="h-4 w-4" />
+              </Button>
+            )}
             <CopyInviteLinkButton
               sessionId={sessionId}
               variant="outline"
-              size="sm"
+              size="icon"
+              showLabel={false}
+              label="Share invite link"
+              icon="share"
               className={cn(
                 "shrink-0",
                 uiMode === "dark"
@@ -1112,9 +1264,24 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
           transition={{ duration: 0.4, delay: 0.35 }}
         >
           <Card className={cn("p-4", glassCard)}>
-            <h3 className={cn("text-sm font-semibold mb-4", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+            <h3 className={cn("text-sm font-semibold", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
               Smart reminders
             </h3>
+            <div className="mt-3 mb-4">
+              <Button
+                onClick={generateSmartReminderText}
+                disabled={isGeneratingSmartReminder}
+                className={cn(
+                  "w-full inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium leading-none",
+                  uiMode === "dark"
+                    ? "bg-gradient-to-r from-sky-500 to-indigo-500 text-black hover:from-sky-400 hover:to-indigo-400"
+                    : "bg-gradient-to-r from-sky-500 to-indigo-500 text-white hover:from-sky-400 hover:to-indigo-400"
+                )}
+              >
+                <Sparkles className="h-4 w-4 shrink-0" />
+                {isGeneratingSmartReminder ? "Generating..." : "Generate Reminder"}
+              </Button>
+            </div>
             <div className="space-y-4">
               {promptConfigs.map((prompt) => {
                 const isAttendance = prompt.type === "attendance_reminder"
@@ -1270,103 +1437,198 @@ export function HostSessionAnalytics({ sessionId, uiMode }: HostSessionAnalytics
           </Card>
         </motion.div>
 
-        {/* SECTION 6: Manage Access (Owner only) */}
-        {role === "owner" && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.4 }}
+      </div>
+
+      {/* Manage Access Dialog (Owner only) */}
+      {role === "owner" && (
+        <Dialog open={manageAccessOpen} onOpenChange={setManageAccessOpen}>
+          <DialogContent
+            className={cn(
+              "w-[calc(100vw-24px)] max-w-[520px] max-h-[calc(100vh-24px)] overflow-y-auto rounded-2xl",
+              uiMode === "dark"
+                ? "bg-slate-900 text-white border border-white/10"
+                : "bg-white text-black border border-black/10"
+            )}
           >
-            <Card className={cn("p-4", glassCard)}>
-              <h3 className={cn("text-sm font-semibold mb-4", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+            <DialogHeader>
+              <DialogTitle className={cn("text-xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
                 Manage access
-              </h3>
-              <div className="space-y-4">
-                {/* Host list */}
-                <div className="space-y-2">
-                  {hosts.map((host) => (
-                    <div
-                      key={host.id}
-                      className={cn(
-                        "flex items-center justify-between p-2 rounded-lg",
-                        uiMode === "dark" ? "bg-white/5" : "bg-black/5"
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={cn("text-sm", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
-                          {host.email}
-                        </span>
-                        <Badge className={cn(
+              </DialogTitle>
+              <DialogDescription className={cn(uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+                Invite other hosts to help manage this session.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                {hosts.map((host) => (
+                  <div
+                    key={host.id}
+                    className={cn(
+                      "flex items-center justify-between p-2 rounded-lg",
+                      uiMode === "dark" ? "bg-white/5" : "bg-black/5"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn("text-sm", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+                        {host.email}
+                      </span>
+                      <Badge
+                        className={cn(
                           "px-2 py-0.5 text-xs",
                           host.role === "owner"
                             ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
                             : "bg-gray-500/20 text-gray-400 border border-gray-500/30"
-                        )}>
-                          {host.role === "owner" ? "Owner" : "Host"}
-                        </Badge>
-                        {!host.accepted_at && (
-                          <Badge className="px-2 py-0.5 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                            Pending
-                          </Badge>
                         )}
-                      </div>
-                      {host.role === "host" && (
-                        <Button
-                          onClick={() => handleRemoveHost(host.email)}
-                          variant="ghost"
-                          size="sm"
-                          className={cn(
-                            "h-7 text-xs",
-                            uiMode === "dark"
-                              ? "text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                              : "text-red-600 hover:text-red-700 hover:bg-red-500/10"
-                          )}
-                        >
-                          Remove
-                        </Button>
+                      >
+                        {host.role === "owner" ? "Owner" : "Host"}
+                      </Badge>
+                      {!host.accepted_at && (
+                        <Badge className="px-2 py-0.5 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                          Pending
+                        </Badge>
                       )}
                     </div>
-                  ))}
-                </div>
-
-                {/* Invite input */}
-                <div className="space-y-2">
-                  <Label className={cn("text-sm", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
-                    Invite host
-                  </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="email"
-                      placeholder="email@example.com"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !isInviting) {
-                          handleInviteHost()
-                        }
-                      }}
-                      className={cn(
-                        "flex-1",
-                        uiMode === "dark"
-                          ? "bg-white/5 border-white/20 text-white placeholder:text-white/40"
-                          : "bg-black/5 border-black/20 text-black placeholder:text-black/40"
-                      )}
-                      disabled={isInviting}
-                    />
-                    <Button
-                      onClick={handleInviteHost}
-                      disabled={isInviting || !inviteEmail.trim()}
-                      className="bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium"
-                    >
-                      {isInviting ? "Inviting..." : "Invite"}
-                    </Button>
+                    {host.role === "host" && (
+                      <Button
+                        onClick={() => handleRemoveHost(host.email)}
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                          "h-7 text-xs",
+                          uiMode === "dark"
+                            ? "text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                            : "text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                        )}
+                      >
+                        Remove
+                      </Button>
+                    )}
                   </div>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                <Label className={cn("text-sm", uiMode === "dark" ? "text-white/90" : "text-black/90")}>
+                  Invite host
+                </Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="email"
+                    placeholder="email@example.com"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !isInviting) {
+                        handleInviteHost()
+                      }
+                    }}
+                    className={cn(
+                      "flex-1",
+                      uiMode === "dark"
+                        ? "bg-white/5 border-white/20 text-white placeholder:text-white/40"
+                        : "bg-black/5 border-black/20 text-black placeholder:text-black/40"
+                    )}
+                    disabled={isInviting}
+                  />
+                  <Button
+                    onClick={handleInviteHost}
+                    disabled={isInviting || !inviteEmail.trim()}
+                    className="bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium"
+                  >
+                    {isInviting ? "Inviting..." : "Invite"}
+                  </Button>
                 </div>
               </div>
-            </Card>
-          </motion.div>
-        )}
-      </div>
+            </div>
+
+            <DialogFooter className="mt-4">
+              <Button
+                onClick={() => setManageAccessOpen(false)}
+                variant="outline"
+                className={cn(
+                  "w-full rounded-full h-11",
+                  uiMode === "dark"
+                    ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
+                    : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
+                )}
+              >
+                Done
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Smart Reminder Dialog */}
+      <Dialog open={smartReminderOpen} onOpenChange={setSmartReminderOpen}>
+        <DialogContent
+          className={cn(
+            "w-[calc(100vw-24px)] max-w-[640px] max-h-[calc(100vh-24px)] overflow-y-auto rounded-2xl",
+            uiMode === "dark"
+              ? "bg-slate-900 text-white border border-white/10"
+              : "bg-white text-black border border-black/10"
+          )}
+        >
+          <DialogHeader>
+            <DialogTitle className={cn("text-xl font-semibold", uiMode === "dark" ? "text-white" : "text-black")}>
+              Smart reminder
+            </DialogTitle>
+            <DialogDescription className={cn(uiMode === "dark" ? "text-white/60" : "text-black/60")}>
+              Copy and paste this into WhatsApp.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <textarea
+              value={smartReminderText}
+              readOnly
+              className={cn(
+                "w-full min-h-[240px] resize-y rounded-xl p-3 text-sm leading-relaxed",
+                "font-mono",
+                uiMode === "dark"
+                  ? "bg-white/5 border border-white/10 text-white placeholder:text-white/40"
+                  : "bg-black/5 border border-black/10 text-black placeholder:text-black/40"
+              )}
+              aria-label="Generated reminder text"
+            />
+          </div>
+
+          <DialogFooter className="gap-3 mt-2">
+            <Button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(smartReminderText)
+                  toast({ title: "Copied", description: "Reminder copied to clipboard." })
+                } catch (error) {
+                  console.error("[SmartReminder] copy failed:", error)
+                  toast({
+                    title: "Couldn't copy",
+                    description: "Please copy manually from the text box.",
+                    variant: "destructive",
+                  })
+                }
+              }}
+              className="flex-1 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-black font-medium rounded-full h-11"
+              disabled={!smartReminderText}
+            >
+              Copy
+            </Button>
+            <Button
+              onClick={() => setSmartReminderOpen(false)}
+              variant="outline"
+              className={cn(
+                "flex-1 rounded-full h-11",
+                uiMode === "dark"
+                  ? "border-white/20 bg-white/5 hover:bg-white/10 text-white"
+                  : "border-black/20 bg-black/5 hover:bg-black/10 text-black"
+              )}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Unpublish Confirmation Dialog */}
       <Dialog open={unpublishDialogOpen} onOpenChange={setUnpublishDialogOpen}>

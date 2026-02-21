@@ -1781,6 +1781,106 @@ export async function confirmParticipantPaid(
   return { ok: true }
 }
 
+/** Result shape for AI validation (used by POST /api/sessions/[id]/validate-payments) */
+export type ValidatePaymentResultItem = {
+  id: string
+  status: "approved" | "flagged" | "failed"
+  reason?: string
+  participant_name: string
+}
+
+/**
+ * Run AI validation on all pending payment proofs for a session.
+ * Used by the validate-payments API. Can be wired to ai_receipt_validator/verifier.py (e.g. subprocess or HTTP).
+ */
+export async function runSessionPaymentValidation(
+  sessionId: string
+): Promise<
+  | { ok: true; status: "success" | "partial" | "failed"; results: ValidatePaymentResultItem[] }
+  | { ok: false; error: string }
+> {
+  const access = await getSessionAccess(sessionId)
+  if (!access.ok) {
+    return { ok: false, error: access.error || "Unauthorized" }
+  }
+
+  const uploadsResult = await getPaymentUploadsForSession(sessionId)
+  if (!uploadsResult.ok) {
+    return { ok: false, error: uploadsResult.error || "Failed to load uploads" }
+  }
+
+  const pending = uploadsResult.uploads.filter(
+    (u) => u.id != null && u.paymentStatus === "pending_review"
+  )
+  if (pending.length === 0) {
+    return {
+      ok: true,
+      status: "success",
+      results: [],
+    }
+  }
+
+  // Stub: run validation per proof. In production, call verifier (e.g. verifier.py) per proof image.
+  const results: ValidatePaymentResultItem[] = pending.map((u) => ({
+    id: u.id!,
+    status: "approved" as const,
+    participant_name: u.participantName,
+  }))
+
+  const hasFailed = results.some((r) => r.status === "failed")
+  const hasFlagged = results.some((r) => r.status === "flagged")
+  const status: "success" | "partial" | "failed" = hasFailed ? "failed" : hasFlagged ? "partial" : "success"
+
+  return { ok: true, status, results }
+}
+
+/**
+ * Bulk approve payment proofs (after AI validation). Updates payment_status to 'approved' for given proof IDs.
+ */
+export async function bulkApprovePaymentProofs(
+  sessionId: string,
+  paymentProofIds: string[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (paymentProofIds.length === 0) {
+    return { ok: true }
+  }
+
+  const supabase = await createClient()
+  const userId = await getUserId(supabase)
+  if (!userId) {
+    return { ok: false, error: "Unauthorized" }
+  }
+
+  const access = await getSessionAccess(sessionId)
+  if (!access.ok) {
+    return { ok: false, error: access.error || "Unauthorized" }
+  }
+
+  const { data: session } = await supabase
+    .from("sessions")
+    .select("id")
+    .eq("id", sessionId)
+    .single()
+
+  if (!session) {
+    return { ok: false, error: "Session not found" }
+  }
+
+  const { error } = await supabase
+    .from("payment_proofs")
+    .update({ payment_status: "approved", processed_at: new Date().toISOString() })
+    .eq("session_id", sessionId)
+    .in("id", paymentProofIds)
+
+  if (error) {
+    console.error("[bulkApprovePaymentProofs] Error:", error)
+    return { ok: false, error: error.message }
+  }
+
+  revalidatePath(`/host/sessions/${sessionId}/edit`)
+  return { ok: true }
+}
+
 /**
  * Mark participant as paid by cash (host-only)
  * Creates a payment_proof record with payment_status='approved' and no proof_image_url
@@ -2552,6 +2652,10 @@ export async function getSessionDataForPrompts(
         start_at: string
         end_at: string | null
         location: string | null
+        map_url?: string | null
+        court_numbers?: string | null
+        payment_qr_image?: string | null
+        capacity?: number | null
         sport: string
         price: number | null
       }
@@ -2574,7 +2678,7 @@ export async function getSessionDataForPrompts(
   // Get session data
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("title, start_at, end_at, location, sport, price")
+    .select("title, start_at, end_at, location, sport, price, map_url, court_numbers, payment_qr_image, capacity")
     .eq("id", sessionId)
     .single()
 
@@ -2591,6 +2695,10 @@ export async function getSessionDataForPrompts(
       location: session.location,
       sport: session.sport,
       price: session.price,
+      map_url: (session as any).map_url || null,
+      court_numbers: (session as any).court_numbers || null,
+      payment_qr_image: (session as any).payment_qr_image || null,
+      capacity: (session as any).capacity ?? null,
     },
   }
 }

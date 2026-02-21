@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Copy } from "lucide-react"
+import { Copy, Share2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 
@@ -13,6 +13,7 @@ interface CopyInviteLinkButtonProps {
   size?: "default" | "sm" | "lg" | "icon"
   showLabel?: boolean
   label?: string
+  icon?: "copy" | "share"
 }
 
 export function CopyInviteLinkButton({
@@ -22,6 +23,7 @@ export function CopyInviteLinkButton({
   size = "default",
   showLabel = true,
   label = "Copy invite link",
+  icon = "copy",
 }: CopyInviteLinkButtonProps) {
   const { toast } = useToast()
   const [isCopying, setIsCopying] = useState(false)
@@ -80,8 +82,9 @@ export function CopyInviteLinkButton({
       variant={variant}
       size={size}
       className={cn(className)}
+      aria-label={showLabel ? undefined : label}
     >
-      <Copy className="w-4 h-4" />
+      {icon === "share" ? <Share2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
       {showLabel && <span>{label}</span>}
     </Button>
   )
